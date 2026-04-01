@@ -1,0 +1,75 @@
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.iml
+
+# --- logs ---
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- env / secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+secrets/
+
+# --- frontend (Vue / Vite) ---
+frontend-ui/node_modules/
+frontend-ui/dist/
+frontend-ui/.vite/
+frontend-ui/coverage/
+frontend-ui/.env
+frontend-ui/.env.*
+
+# --- backend (Spring Boot / Maven) ---
+backend-java/target/
+backend-java/.mvn/wrapper/maven-wrapper.jar
+backend-java/.settings/
+backend-java/.classpath
+backend-java/.project
+backend-java/logs/
+backend-java/*.log
+
+# --- java / build outputs ---
+*.class
+*.jar
+*.war
+*.ear
+out/
+build/
+
+# --- python / ai engine ---
+ai-engine-python/.venv/
+ai-engine-python/venv/
+ai-engine-python/__pycache__/
+ai-engine-python/.pytest_cache/
+ai-engine-python/.mypy_cache/
+ai-engine-python/.ruff_cache/
+ai-engine-python/.coverage
+ai-engine-python/htmlcov/
+ai-engine-python/dist/
+ai-engine-python/build/
+*.pyc
+*.pyo
+*.pyd
+
+# --- temp files ---
+.tmp/
+tmp/
+.temp/
+*.tmp
+
+# --- runtime data ---
+*.pid
+*.seed

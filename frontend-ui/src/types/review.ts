@@ -1,0 +1,32 @@
+export type ReviewTaskStatus = 'CREATED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+
+export interface CreateReviewRequest {
+  codeText: string
+  language: 'java'
+  sourceType: 'snippet'
+}
+
+export interface CreateReviewResponse {
+  taskId: string
+  status: ReviewTaskStatus
+  message: string
+}
+
+export interface ReviewTask {
+  taskId: string
+  status: ReviewTaskStatus
+  createdAt: string
+  updatedAt: string
+  result: Record<string, unknown>
+  errorMessage: string | null
+}
+
+export interface ReviewEvent {
+  taskId: string
+  eventType: string
+  message: string
+  timestamp: string
+  sequence: number
+  status: ReviewTaskStatus
+  payload: Record<string, unknown>
+}
