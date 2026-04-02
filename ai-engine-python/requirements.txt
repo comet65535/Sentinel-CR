@@ -3,3 +3,6 @@ uvicorn==0.35.0
 pydantic==2.11.7
 pytest==8.4.2
 httpx==0.28.1
+tree-sitter==0.25.2
+tree-sitter-java==0.23.5
+semgrep==1.124.0

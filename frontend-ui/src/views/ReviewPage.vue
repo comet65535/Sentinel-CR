@@ -27,14 +27,38 @@ const sortedEvents = computed(() =>
   [...events.value].sort((left, right) => left.sequence - right.sequence)
 )
 
-const DAY0_SSE_EVENT_TYPES = [
+const SSE_EVENT_TYPES = [
   'task_created',
   'analysis_started',
-  'analysis_completed',
+  'ast_parsing_started',
+  'ast_parsing_completed',
+  'symbol_graph_started',
+  'symbol_graph_completed',
+  'semgrep_scan_started',
+  'semgrep_scan_completed',
+  'semgrep_scan_warning',
+  'analyzer_completed',
   'review_completed',
   'review_failed',
   'heartbeat',
 ] as const
+
+const AGGREGATED_EVENT_TYPES = new Set<string>([
+  'task_created',
+  'analysis_started',
+  'ast_parsing_completed',
+  'symbol_graph_completed',
+  'semgrep_scan_completed',
+  'semgrep_scan_warning',
+  'analyzer_completed',
+  'review_completed',
+  'review_failed',
+  'heartbeat',
+])
+
+const displayEvents = computed(() =>
+  sortedEvents.value.filter((event) => AGGREGATED_EVENT_TYPES.has(event.eventType))
+)
 
 function isTaskFinished(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED'
@@ -77,7 +101,7 @@ function subscribeEventStream(nextTaskId: string) {
   }
 
   source.onmessage = handleEventMessage
-  DAY0_SSE_EVENT_TYPES.forEach((eventType) => {
+  SSE_EVENT_TYPES.forEach((eventType) => {
     source.addEventListener(eventType, (event) => {
       handleEventMessage(event as MessageEvent<string>)
     })
@@ -168,7 +192,7 @@ onBeforeUnmount(() => {
       {{ errorMessage }}
     </section>
 
-    <EventTimeline :events="sortedEvents" />
+    <EventTimeline :events="displayEvents" />
   </main>
 </template>
 

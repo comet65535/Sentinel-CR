@@ -30,6 +30,10 @@ class EngineState(BaseModel):
     code_text: str
     language: str
     issues: list[dict[str, Any]] = Field(default_factory=list)
+    symbols: list[dict[str, Any]] = Field(default_factory=list)
+    context_summary: dict[str, Any] = Field(default_factory=dict)
+    analyzer_summary: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     issue_graph: list[dict[str, Any]] = Field(default_factory=list)
     patch: dict[str, Any] | None = None
     verification_result: dict[str, Any] | None = None

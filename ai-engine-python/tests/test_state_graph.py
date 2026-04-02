@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import asyncio
+
+from core.schemas import InternalReviewRunRequest
+from core.state_graph import run_day2_state_graph
+
+
+def _run_graph(request: InternalReviewRunRequest) -> list[dict]:
+    async def _collect() -> list[dict]:
+        events = []
+        async for event in run_day2_state_graph(request):
+            events.append(event.model_dump(by_alias=True))
+        return events
+
+    return asyncio.run(_collect())
+
+
+def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.parse_java_code",
+        lambda code: {
+            "language": "java",
+            "package": "com.example",
+            "imports": ["java.util.Optional"],
+            "classes": [
+                {
+                    "name": "Demo",
+                    "qualifiedName": "com.example.Demo",
+                    "startLine": 1,
+                    "endLine": 6,
+                    "fields": [],
+                    "methods": [
+                        {
+                            "name": "run",
+                            "signature": "void run()",
+                            "parameters": [],
+                            "startLine": 2,
+                            "endLine": 5,
+                            "bodyStartLine": 2,
+                            "bodyEndLine": 5,
+                        }
+                    ],
+                }
+            ],
+            "errors": [],
+            "summary": {
+                "classesCount": 1,
+                "methodsCount": 1,
+                "fieldsCount": 0,
+                "importsCount": 1,
+            },
+            "diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        "core.state_graph.build_symbol_graph",
+        lambda code, ast: {
+            "symbols": [
+                {
+                    "symbolId": "class:com.example.Demo",
+                    "kind": "class",
+                    "name": "Demo",
+                    "qualifiedName": "com.example.Demo",
+                    "ownerClass": None,
+                    "signature": None,
+                    "startLine": 1,
+                    "endLine": 6,
+                }
+            ],
+            "relations": [],
+            "summary": {
+                "classesCount": 1,
+                "methodsCount": 1,
+                "fieldsCount": 0,
+                "callEdgesCount": 0,
+                "variableRefsCount": 0,
+            },
+            "diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [],
+            "summary": {
+                "issuesCount": 0,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+    request = InternalReviewRunRequest(
+        taskId="rev_state_graph_ok",
+        codeText="public class Demo { void run() {} }",
+        language="java",
+        sourceType="snippet",
+    )
+    events = _run_graph(request)
+    event_types = [event["eventType"] for event in events]
+
+    assert event_types == [
+        "analysis_started",
+        "ast_parsing_started",
+        "ast_parsing_completed",
+        "symbol_graph_started",
+        "symbol_graph_completed",
+        "semgrep_scan_started",
+        "semgrep_scan_completed",
+        "analyzer_completed",
+        "review_completed",
+    ]
+
+    completed_payload = events[-1]["payload"]
+    assert "result" in completed_payload
+    assert "summary" in completed_payload["result"]
+    assert "analyzer" in completed_payload["result"]
+    assert "issues" in completed_payload["result"]
+    assert "symbols" in completed_payload["result"]
+    assert "contextSummary" in completed_payload["result"]
+    assert "diagnostics" in completed_payload["result"]
+    assert "classes" not in completed_payload
+
+
+def test_state_graph_uses_semgrep_warning_event(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.parse_java_code",
+        lambda code: {
+            "language": "java",
+            "package": None,
+            "imports": [],
+            "classes": [],
+            "errors": [],
+            "summary": {"classesCount": 0, "methodsCount": 0, "fieldsCount": 0, "importsCount": 0},
+            "diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        "core.state_graph.build_symbol_graph",
+        lambda code, ast: {
+            "symbols": [],
+            "relations": [],
+            "summary": {
+                "classesCount": 0,
+                "methodsCount": 0,
+                "fieldsCount": 0,
+                "callEdgesCount": 0,
+                "variableRefsCount": 0,
+            },
+            "diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [],
+            "summary": {
+                "issuesCount": 0,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [
+                {
+                    "code": "SEMGREP_UNAVAILABLE",
+                    "message": "semgrep unavailable",
+                    "source": "semgrep_runner",
+                    "level": "warning",
+                }
+            ],
+        },
+    )
+
+    request = InternalReviewRunRequest(
+        taskId="rev_state_graph_warning",
+        codeText="public class Demo {}",
+        language="java",
+        sourceType="snippet",
+    )
+    events = _run_graph(request)
+    assert "semgrep_scan_warning" in [event["eventType"] for event in events]
+
+
+def test_state_graph_fails_on_empty_input() -> None:
+    request = InternalReviewRunRequest(
+        taskId="rev_state_graph_empty",
+        codeText="   ",
+        language="java",
+        sourceType="snippet",
+    )
+    events = _run_graph(request)
+
+    assert [event["eventType"] for event in events] == ["analysis_started", "review_failed"]
+    diagnostics = events[-1]["payload"]["diagnostics"]
+    assert any(item.get("code") == "EMPTY_INPUT" for item in diagnostics)
+
+
+def test_state_graph_fails_on_unsupported_language() -> None:
+    request = InternalReviewRunRequest(
+        taskId="rev_state_graph_lang",
+        codeText="print('hello')",
+        language="python",
+        sourceType="snippet",
+    )
+    events = _run_graph(request)
+
+    assert [event["eventType"] for event in events] == ["analysis_started", "review_failed"]
+    diagnostics = events[-1]["payload"]["diagnostics"]
+    assert any(item.get("code") == "UNSUPPORTED_LANGUAGE" for item in diagnostics)
