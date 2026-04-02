@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import type { ReviewEvent } from '../types/review'
 
 defineProps<{
@@ -24,9 +24,7 @@ function formatTime(value: string): string {
       <h2>事件流</h2>
     </header>
 
-    <p v-if="events.length === 0" class="placeholder">
-      暂无事件，等待任务启动...
-    </p>
+    <p v-if="events.length === 0" class="placeholder">暂无事件，等待任务启动...</p>
 
     <ul v-else class="event-list">
       <li v-for="event in events" :key="event.sequence" class="event-item">

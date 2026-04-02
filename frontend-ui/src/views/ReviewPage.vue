@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { createReviewEventSource, createReviewTask, fetchReviewTask } from '../api/review'
 import EventTimeline from '../components/EventTimeline.vue'
@@ -32,12 +32,9 @@ const debugMode = ref(false)
 
 let eventSource: EventSource | null = null
 
-const sortedEvents = computed(() =>
-  [...events.value].sort((left, right) => left.sequence - right.sequence)
-)
+const sortedEvents = computed(() => [...events.value].sort((left, right) => left.sequence - right.sequence))
 
 const displayEvents = computed(() =>
-  // 默认展示聚合事件，Debug 模式展示完整细粒度事件。
   debugMode.value
     ? sortedEvents.value
     : sortedEvents.value.filter((event) => AGGREGATED_EVENT_TYPES.has(event.eventType))
@@ -69,6 +66,10 @@ const resultStats = computed(() => {
   const symbols = Array.isArray(result.symbols) ? result.symbols : []
   const issues = Array.isArray(result.issues) ? result.issues : []
   const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : []
+  const repairPlan = Array.isArray(result.repair_plan) ? result.repair_plan : []
+  const issueGraph = isObject(result.issue_graph) ? (result.issue_graph as Record<string, unknown>) : {}
+  const graphNodes = Array.isArray(issueGraph.nodes) ? issueGraph.nodes : []
+  const graphEdges = Array.isArray(issueGraph.edges) ? issueGraph.edges : []
 
   return {
     issuesCount: issues.length,
@@ -77,6 +78,9 @@ const resultStats = computed(() => {
     fieldsCount: toNumber(analyzer.fieldsCount),
     symbolsCount: symbols.length,
     diagnosticsCount: diagnostics.length,
+    issueGraphNodesCount: graphNodes.length,
+    issueGraphEdgesCount: graphEdges.length,
+    repairPlanCount: repairPlan.length,
   }
 })
 
@@ -205,15 +209,19 @@ function toNumber(value: unknown): number {
   }
   return 0
 }
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
 </script>
 
 <template>
   <main class="page">
     <section class="headline">
-      <p class="eyebrow">Sentinel-CR Day 2</p>
-      <h1>Day 2 Analyzer · Tree-sitter + Symbol Graph + Semgrep</h1>
+      <p class="eyebrow">Sentinel-CR Day 3</p>
+      <h1>Day 3 Issue Graph Planner · Analyzer + Planner</h1>
       <p class="hint">
-        提交一段 Java 代码，观察 Analyzer 事件流、结构化结果与诊断信息。
+        提交一段 Java 代码，观察 Analyzer 与 Planner 事件流、结构化问题图与修复计划。
       </p>
     </section>
 
@@ -230,7 +238,7 @@ function toNumber(value: unknown): number {
 
     <section class="panel result-card">
       <header class="result-header">
-        <h2>Day 2 结果摘要</h2>
+        <h2>Day 3 结果摘要</h2>
         <p>{{ reviewResult ? '已生成结构化结果' : '等待 review_completed 事件' }}</p>
       </header>
       <div class="result-grid">
@@ -240,6 +248,9 @@ function toNumber(value: unknown): number {
         <p><strong>字段数量：</strong>{{ resultStats.fieldsCount }}</p>
         <p><strong>符号数量：</strong>{{ resultStats.symbolsCount }}</p>
         <p><strong>诊断数量：</strong>{{ resultStats.diagnosticsCount }}</p>
+        <p><strong>问题图节点：</strong>{{ resultStats.issueGraphNodesCount }}</p>
+        <p><strong>问题图边：</strong>{{ resultStats.issueGraphEdgesCount }}</p>
+        <p><strong>修复计划项：</strong>{{ resultStats.repairPlanCount }}</p>
         <p><strong>Semgrep 状态：</strong>{{ semgrepStatus }}</p>
         <p><strong>当前任务状态：</strong>{{ toStatusText(taskStatus) }}</p>
       </div>
@@ -257,7 +268,11 @@ function toNumber(value: unknown): number {
       :summarize-payload="summarizePayload"
     />
     <p class="mode-note">
-      {{ debugMode ? 'Debug 模式：展示全部细粒度事件（含 *_started）。' : '默认模式：仅展示聚合阶段事件。' }}
+      {{
+        debugMode
+          ? 'Debug 模式：展示全部细粒度事件（含 *_started）。'
+          : '默认模式：仅展示聚合阶段事件。'
+      }}
     </p>
   </main>
 </template>

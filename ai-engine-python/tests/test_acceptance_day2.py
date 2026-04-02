@@ -115,6 +115,10 @@ public class CleanService {
         "semgrep_scan_started",
         "semgrep_scan_completed",
         "analyzer_completed",
+        "planner_started",
+        "issue_graph_built",
+        "repair_plan_created",
+        "planner_completed",
         "review_completed",
     ]
     assert events[-1]["payload"]["result"]["issues"] == []

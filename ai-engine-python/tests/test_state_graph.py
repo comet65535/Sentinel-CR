@@ -1,15 +1,16 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 
 from core.schemas import InternalReviewRunRequest
-from core.state_graph import run_day2_state_graph
+from core.state_graph import run_day2_state_graph, run_day3_state_graph
 
 
-def _run_graph(request: InternalReviewRunRequest) -> list[dict]:
+def _run_graph(request: InternalReviewRunRequest, *, use_day2_alias: bool = False) -> list[dict]:
     async def _collect() -> list[dict]:
         events = []
-        async for event in run_day2_state_graph(request):
+        iterator = run_day2_state_graph(request) if use_day2_alias else run_day3_state_graph(request)
+        async for event in iterator:
             events.append(event.model_dump(by_alias=True))
         return events
 
@@ -111,6 +112,10 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
         "semgrep_scan_started",
         "semgrep_scan_completed",
         "analyzer_completed",
+        "planner_started",
+        "issue_graph_built",
+        "repair_plan_created",
+        "planner_completed",
         "review_completed",
     ]
 
@@ -122,6 +127,12 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
     assert "symbols" in completed_payload["result"]
     assert "contextSummary" in completed_payload["result"]
     assert "diagnostics" in completed_payload["result"]
+
+    assert "issue_graph" in completed_payload
+    assert "repair_plan" in completed_payload
+    assert "issue_graph" in completed_payload["result"]
+    assert "repair_plan" in completed_payload["result"]
+
     assert "classes" not in completed_payload
 
 
@@ -181,7 +192,11 @@ def test_state_graph_uses_semgrep_warning_event(monkeypatch) -> None:
         sourceType="snippet",
     )
     events = _run_graph(request)
-    assert "semgrep_scan_warning" in [event["eventType"] for event in events]
+    event_types = [event["eventType"] for event in events]
+    assert "semgrep_scan_warning" in event_types
+    assert "issue_graph_built" in event_types
+    assert "repair_plan_created" in event_types
+    assert "planner_completed" in event_types
 
 
 def test_state_graph_fails_on_empty_input() -> None:
@@ -205,7 +220,7 @@ def test_state_graph_fails_on_unsupported_language() -> None:
         language="python",
         sourceType="snippet",
     )
-    events = _run_graph(request)
+    events = _run_graph(request, use_day2_alias=True)
 
     assert [event["eventType"] for event in events] == ["analysis_started", "review_failed"]
     diagnostics = events[-1]["payload"]["diagnostics"]

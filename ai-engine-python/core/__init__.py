@@ -1,1 +1,1 @@
-"""Core primitives for the Day1 Python engine skeleton."""
+"""Core primitives for the Sentinel-CR Python engine."""

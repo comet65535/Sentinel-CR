@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
@@ -16,7 +16,7 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "UP", "service": "ai-engine-python"}
 
 
-def test_internal_review_run_returns_day2_ndjson_stream() -> None:
+def test_internal_review_run_returns_day3_ndjson_stream() -> None:
     request_body = {
         "taskId": "rev_test_001",
         "codeText": "public class Demo { public String hi(String n){ return \"hi\" + n; } }",
@@ -42,11 +42,22 @@ def test_internal_review_run_returns_day2_ndjson_stream() -> None:
         "symbol_graph_completed",
         "semgrep_scan_started",
     ]
-    assert event_types[-2:] == ["analyzer_completed", "review_completed"]
     assert event_types[6] in {"semgrep_scan_completed", "semgrep_scan_warning"}
+    assert event_types[-6:] == [
+        "analyzer_completed",
+        "planner_started",
+        "issue_graph_built",
+        "repair_plan_created",
+        "planner_completed",
+        "review_completed",
+    ]
 
     final_event = events[-1]
     assert final_event["status"] == "COMPLETED"
     assert "result" in final_event["payload"]
     assert "symbols" in final_event["payload"]["result"]
     assert "contextSummary" in final_event["payload"]["result"]
+    assert "issue_graph" in final_event["payload"]
+    assert "repair_plan" in final_event["payload"]
+    assert "issue_graph" in final_event["payload"]["result"]
+    assert "repair_plan" in final_event["payload"]["result"]

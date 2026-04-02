@@ -25,6 +25,25 @@ class PythonEngineEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+def default_issue_graph() -> dict[str, Any]:
+    return {
+        "schema_version": "day3.v1",
+        "nodes": [],
+        "edges": [],
+    }
+
+
+def default_planner_summary() -> dict[str, int]:
+    return {
+        "total_issues": 0,
+        "total_nodes": 0,
+        "total_edges": 0,
+        "total_plans": 0,
+        "high_severity_count": 0,
+        "requires_test_count": 0,
+    }
+
+
 class EngineState(BaseModel):
     task_id: str
     code_text: str
@@ -34,7 +53,9 @@ class EngineState(BaseModel):
     context_summary: dict[str, Any] = Field(default_factory=dict)
     analyzer_summary: dict[str, Any] = Field(default_factory=dict)
     diagnostics: list[dict[str, Any]] = Field(default_factory=list)
-    issue_graph: list[dict[str, Any]] = Field(default_factory=list)
+    issue_graph: dict[str, Any] = Field(default_factory=default_issue_graph)
+    repair_plan: list[dict[str, Any]] = Field(default_factory=list)
+    planner_summary: dict[str, int] = Field(default_factory=default_planner_summary)
     patch: dict[str, Any] | None = None
     verification_result: dict[str, Any] | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)

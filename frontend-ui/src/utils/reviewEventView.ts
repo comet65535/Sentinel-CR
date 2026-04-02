@@ -1,4 +1,4 @@
-import type { ReviewEvent, ReviewTaskStatus } from '../types/review'
+﻿import type { ReviewEvent, ReviewTaskStatus } from '../types/review'
 
 const EVENT_TYPE_TITLE_MAP: Record<string, string> = {
   task_created: '任务已创建',
@@ -11,6 +11,10 @@ const EVENT_TYPE_TITLE_MAP: Record<string, string> = {
   semgrep_scan_completed: 'Semgrep 扫描完成',
   semgrep_scan_warning: 'Semgrep 扫描降级',
   analyzer_completed: '分析器处理完成',
+  planner_started: '开始构建修复计划',
+  issue_graph_built: '问题图构建完成',
+  repair_plan_created: '修复计划已生成',
+  planner_completed: '规划器处理完成',
   review_completed: '分析完成',
   review_failed: '分析失败',
   heartbeat: '连接保活',
@@ -24,6 +28,10 @@ export const AGGREGATED_EVENT_TYPES = new Set<string>([
   'semgrep_scan_completed',
   'semgrep_scan_warning',
   'analyzer_completed',
+  'planner_started',
+  'issue_graph_built',
+  'repair_plan_created',
+  'planner_completed',
   'review_completed',
   'review_failed',
   'heartbeat',
@@ -40,6 +48,10 @@ export const SSE_EVENT_TYPES = [
   'semgrep_scan_completed',
   'semgrep_scan_warning',
   'analyzer_completed',
+  'planner_started',
+  'issue_graph_built',
+  'repair_plan_created',
+  'planner_completed',
   'review_completed',
   'review_failed',
   'heartbeat',
@@ -70,11 +82,11 @@ export function buildEventSummary(event: ReviewEvent): string {
     case 'ast_parsing_started':
       return '正在解析 Java AST。'
     case 'ast_parsing_completed':
-      return `AST 解析完成（${toCount(payload.classesCount)}个类，${toCount(payload.methodsCount)}个方法，${toCount(payload.fieldsCount)}个字段）`
+      return `AST 解析完成（${toCount(payload.classesCount)} 个类，${toCount(payload.methodsCount)} 个方法，${toCount(payload.fieldsCount)} 个字段）`
     case 'symbol_graph_started':
       return '正在构建符号图。'
     case 'symbol_graph_completed':
-      return `符号图构建完成（${toCount(payload.symbolsCount)}个符号，${toCount(payload.callEdgesCount)}条调用边）`
+      return `符号图构建完成（${toCount(payload.symbolsCount)} 个符号，${toCount(payload.callEdgesCount)} 条调用边）`
     case 'semgrep_scan_started':
       return '开始执行 Semgrep 规则扫描。'
     case 'semgrep_scan_completed':
@@ -88,9 +100,17 @@ export function buildEventSummary(event: ReviewEvent): string {
       }
       return `分析器处理完成（问题 ${toCount(summary.issuesCount)}，符号 ${toCount(summary.symbolsCount)}）`
     }
+    case 'planner_started':
+      return `开始构建 Issue Graph 与 Repair Plan（输入问题 ${toCount(payload.inputIssueCount)}，符号 ${toCount(payload.inputSymbolCount)}）`
+    case 'issue_graph_built':
+      return `问题图构建完成（${toCount(payload.issueCount)} 个节点，${toCount(payload.edgeCount)} 条边）`
+    case 'repair_plan_created':
+      return `修复计划已生成（${toCount(payload.planCount)} 个计划项）`
+    case 'planner_completed':
+      return `规划器处理完成（问题 ${toCount(payload.issueCount)}，计划 ${toCount(payload.planCount)}）`
     case 'review_completed': {
       const result = (payload.result ?? payload) as Record<string, unknown>
-      return `分析完成：${toArrayCount(result.issues)}个问题，${toArrayCount(result.symbols)}个符号，${toArrayCount(result.diagnostics)}条诊断`
+      return `分析完成：${toArrayCount(result.issues)} 个问题，${toArrayCount(result.symbols)} 个符号，${toArrayCount(result.diagnostics)} 条诊断`
     }
     case 'review_failed':
       return `分析失败：${toFailureMessage(payload)}`
@@ -103,21 +123,19 @@ export function buildEventSummary(event: ReviewEvent): string {
 
 export function summarizePayload(payload: Record<string, unknown>): string {
   const stage = typeof payload.stage === 'string' ? payload.stage : undefined
-  const issuesCount = toCount(payload.issuesCount)
-  const classesCount = toCount(payload.classesCount)
-  const methodsCount = toCount(payload.methodsCount)
-  const symbolsCount = toCount(payload.symbolsCount)
   const code = typeof payload.code === 'string' ? payload.code : undefined
-  const fields: string[] = []
 
-  if (stage) fields.push(`stage=${stage}`)
-  if (classesCount > 0) fields.push(`classes=${classesCount}`)
-  if (methodsCount > 0) fields.push(`methods=${methodsCount}`)
-  if (symbolsCount > 0) fields.push(`symbols=${symbolsCount}`)
-  if (issuesCount >= 0 && payload.issuesCount !== undefined) fields.push(`issues=${issuesCount}`)
-  if (code) fields.push(`code=${code}`)
+  const compactFields = [
+    pair('stage', stage),
+    pair('classes', maybeCount(payload.classesCount)),
+    pair('methods', maybeCount(payload.methodsCount)),
+    pair('symbols', maybeCount(payload.symbolsCount)),
+    pair('issues', maybeCount(payload.issuesCount)),
+    pair('plans', maybeCount(payload.planCount)),
+    pair('code', code),
+  ].filter((item): item is string => Boolean(item))
 
-  if (fields.length > 0) return fields.join(', ')
+  if (compactFields.length > 0) return compactFields.join(', ')
 
   const keys = Object.keys(payload)
   if (keys.length === 0) return '空 payload'
@@ -166,6 +184,16 @@ function toCount(value: unknown): number {
   return 0
 }
 
+function maybeCount(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  return toCount(value)
+}
+
 function toArrayCount(value: unknown): number {
   return Array.isArray(value) ? value.length : 0
+}
+
+function pair(key: string, value: string | number | undefined): string | undefined {
+  if (value === undefined) return undefined
+  return `${key}=${value}`
 }
