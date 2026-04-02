@@ -5,6 +5,7 @@ import com.backendjava.api.dto.CreateReviewResponse;
 import com.backendjava.api.dto.ReviewTaskResponse;
 import com.backendjava.engine.AiEngineAdapter;
 import com.backendjava.engine.EngineEvent;
+import com.backendjava.engine.PythonEngineProperties;
 import com.backendjava.event.ReviewEvent;
 import com.backendjava.event.ReviewEventBus;
 import com.backendjava.task.InMemoryTaskRepository;
@@ -15,6 +16,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -28,18 +30,21 @@ public class ReviewService {
     private final InMemoryTaskRepository taskRepository;
     private final ReviewEventBus reviewEventBus;
     private final AiEngineAdapter aiEngineAdapter;
+    private final PythonEngineProperties aiProperties;
 
     public ReviewService(
             InMemoryTaskRepository taskRepository,
             ReviewEventBus reviewEventBus,
-            AiEngineAdapter aiEngineAdapter) {
+            AiEngineAdapter aiEngineAdapter,
+            PythonEngineProperties aiProperties) {
         this.taskRepository = taskRepository;
         this.reviewEventBus = reviewEventBus;
         this.aiEngineAdapter = aiEngineAdapter;
+        this.aiProperties = aiProperties;
     }
 
     public CreateReviewResponse createReviewTask(CreateReviewRequest request) {
-        validateDay0Request(request);
+        validateReviewRequest(request);
 
         String taskId = generateTaskId();
         ReviewTask task =
@@ -47,7 +52,12 @@ public class ReviewService {
         taskRepository.save(task);
         reviewEventBus.initializeTaskStream(taskId);
 
-        publishTaskEvent(task, "task_created", "task created", ReviewTaskStatus.CREATED, Map.of());
+        publishTaskEvent(
+                task,
+                "task_created",
+                "task created",
+                ReviewTaskStatus.CREATED,
+                Map.of("source", "backend", "engine", aiProperties.getMode()));
         startReviewPipeline(task);
 
         return new CreateReviewResponse(taskId, task.getStatus(), "review task created");
@@ -76,11 +86,26 @@ public class ReviewService {
     }
 
     private void startReviewPipeline(ReviewTask task) {
+        AtomicBoolean terminalEventObserved = new AtomicBoolean(false);
+
         aiEngineAdapter.startReview(task)
-                .doOnNext(event -> handleEngineEvent(task, event))
+                .doOnNext(event -> {
+                    handleEngineEvent(task, event);
+                    if (event.status() == ReviewTaskStatus.COMPLETED || event.status() == ReviewTaskStatus.FAILED) {
+                        terminalEventObserved.set(true);
+                    }
+                })
                 .doOnError(throwable -> handleEngineFailure(task, throwable))
-                .doOnComplete(() -> reviewEventBus.completeTaskStream(task.getTaskId()))
-                .subscribe();
+                .doOnComplete(() -> {
+                    if (terminalEventObserved.get()) {
+                        reviewEventBus.completeTaskStream(task.getTaskId());
+                        return;
+                    }
+                    handleEngineFailure(task, new IllegalStateException("engine stream completed without terminal event"));
+                })
+                .subscribe(
+                        ignored -> { },
+                        ignored -> { });
     }
 
     private void handleEngineEvent(ReviewTask task, EngineEvent engineEvent) {
@@ -105,7 +130,12 @@ public class ReviewService {
                 "review_failed",
                 "review failed",
                 ReviewTaskStatus.FAILED,
-                Map.of("error", errorMessage));
+                Map.of(
+                        "source", "backend",
+                        "stage", "engine_error",
+                        "engine", aiProperties.getMode(),
+                        "errorType", classifyEngineError(errorMessage),
+                        "error", errorMessage));
 
         reviewEventBus.completeTaskStream(task.getTaskId());
     }
@@ -128,13 +158,21 @@ public class ReviewService {
         reviewEventBus.publish(event);
     }
 
-    private void validateDay0Request(CreateReviewRequest request) {
+    private void validateReviewRequest(CreateReviewRequest request) {
         if (!"java".equalsIgnoreCase(request.getLanguage())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Day0 only supports language=java");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Day1 only supports language=java");
         }
         if (!"snippet".equalsIgnoreCase(request.getSourceType())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Day0 only supports sourceType=snippet");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Day1 only supports sourceType=snippet");
         }
+    }
+
+    private String classifyEngineError(String errorMessage) {
+        String lowerMessage = errorMessage.toLowerCase();
+        if (lowerMessage.contains("connection") || lowerMessage.contains("timeout") || lowerMessage.contains("refused")) {
+            return "python_unreachable";
+        }
+        return "engine_error";
     }
 
     private String generateTaskId() {

@@ -1,57 +1,84 @@
 @echo off
-setlocal ENABLEDELAYEDEXPANSION
-cd /d %~dp0
+chcp 65001 >nul
+setlocal
+cd /d "%~dp0"
+
+:: 1. Define paths
+set "ROOT=%~dp0"
+set "FRONTEND_DIR=%ROOT%frontend-ui"
+set "BACKEND_DIR=%ROOT%backend-java"
+set "AI_DIR=%ROOT%ai-engine-python"
+
+:: 2. Define ports
+set "FRONTEND_PORT=5173"
+set "BACKEND_PORT=8080"
+set "AI_PORT=8010"
+set "AI_BASE_URL=http://localhost:%AI_PORT%"
 
 echo ========================================
-echo   Sentinel-CR one-click startup
+echo   Sentinel-CR Auto-Start Script
 echo ========================================
 echo.
 
-set ROOT=%~dp0
-set FRONTEND_DIR=%ROOT%frontend-ui
-set BACKEND_DIR=%ROOT%backend-java
-set AI_DIR=%ROOT%ai-engine-python
+:: 3. Check directory existence
+if not exist "%FRONTEND_DIR%" goto err_frontend
+if not exist "%BACKEND_DIR%" goto err_backend
 
-if not exist "%FRONTEND_DIR%" (
-  echo [ERROR] frontend-ui not found.
-  goto :end
+:: ==========================================
+:: Stage 1: Start AI Engine (Python)
+:: ==========================================
+echo [1/3] Starting AI Engine on port %AI_PORT% ...
+if not exist "%AI_DIR%\main.py" (
+    echo [WARN] Cannot find %AI_DIR%\main.py, skipping AI Engine...
+    goto start_backend
 )
 
-if not exist "%BACKEND_DIR%" (
-  echo [ERROR] backend-java not found.
-  goto :end
-)
+set "PY_CMD=python"
+if exist "%AI_DIR%\.venv\Scripts\python.exe" set "PY_CMD=.venv\Scripts\python.exe"
+if exist "%AI_DIR%\venv\Scripts\python.exe" set "PY_CMD=venv\Scripts\python.exe"
 
-echo [1/3] Starting Spring Boot backend...
-start "Sentinel-CR Backend" cmd /k "cd /d "%BACKEND_DIR%" && if exist mvnw.cmd (mvnw.cmd spring-boot:run) else mvn spring-boot:run"
+start "Sentinel-CR AI Engine" /D "%AI_DIR%" cmd /k "%PY_CMD% -m uvicorn main:app --host 0.0.0.0 --port %AI_PORT%"
+
+:start_backend
+timeout /t 2 /nobreak >nul
+
+:: ==========================================
+:: Stage 2: Start Spring Boot Backend
+:: ==========================================
+echo [2/3] Starting Spring Boot Backend on port %BACKEND_PORT% ...
+
+set "MVN_CMD=mvn"
+if exist "%BACKEND_DIR%\mvnw.cmd" set "MVN_CMD=mvnw.cmd"
+
+start "Sentinel-CR Backend" /D "%BACKEND_DIR%" cmd /k "set SERVER_PORT=%BACKEND_PORT% && set SENTINEL_AI_MODE=python && set SENTINEL_AI_PYTHON_BASE_URL=%AI_BASE_URL% && call %MVN_CMD% spring-boot:run"
 
 timeout /t 2 /nobreak >nul
 
-echo [2/3] Starting Vue frontend...
-start "Sentinel-CR Frontend" cmd /k "cd /d "%FRONTEND_DIR%" && npm run dev"
-
-timeout /t 2 /nobreak >nul
-
-echo [3/3] Starting AI engine...
-if exist "%AI_DIR%" (
-  if exist "%AI_DIR%\main.py" (
-    start "Sentinel-CR AI Engine" cmd /k "cd /d "%AI_DIR%" && if exist .venv\Scripts\python.exe (.venv\Scripts\python.exe main.py) else if exist venv\Scripts\python.exe (venv\Scripts\python.exe main.py) else python main.py"
-  ) else (
-    start "Sentinel-CR AI Engine" cmd /k "cd /d "%AI_DIR%" && echo AI engine folder exists, but main.py was not found. && echo Day0 can still run with backend mock AI."
-  )
-) else (
-  echo [WARN] ai-engine-python not found. Skipping AI engine.
-)
+:: ==========================================
+:: Stage 3: Start Vue Frontend
+:: ==========================================
+echo [3/3] Starting Vue Frontend on port %FRONTEND_PORT% ...
+start "Sentinel-CR Frontend" /D "%FRONTEND_DIR%" cmd /k "npm run dev -- --port %FRONTEND_PORT%"
 
 echo.
-echo All startup commands have been launched in separate windows.
-echo Frontend default: http://localhost:5173
-echo Backend default:  http://localhost:8080
+echo [SUCCESS] All services launched in separate windows!
+echo Frontend: http://localhost:%FRONTEND_PORT%
+echo Backend : http://localhost:%BACKEND_PORT%
+echo AI      : http://localhost:%AI_PORT%
 echo.
-
+echo Press any key to exit this launcher window...
+pause >nul
 goto :eof
 
-:end
-echo.
-echo Startup aborted.
+:: ==========================================
+:: Error Handlers
+:: ==========================================
+:err_frontend
+echo [ERROR] Startup failed! Cannot find frontend directory: %FRONTEND_DIR%
 pause
+goto :eof
+
+:err_backend
+echo [ERROR] Startup failed! Cannot find backend directory: %BACKEND_DIR%
+pause
+goto :eof
