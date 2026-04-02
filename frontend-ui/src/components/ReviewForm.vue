@@ -22,7 +22,7 @@ function onSubmit() {
 <template>
   <section class="panel">
     <header class="section-header">
-      <h2>Java Code Input</h2>
+      <h2>Java 代码输入</h2>
     </header>
     <textarea
       class="code-input"
@@ -30,10 +30,10 @@ function onSubmit() {
       @input="onInput"
       rows="14"
       spellcheck="false"
-      placeholder="Paste Java code snippet here"
+      placeholder="请粘贴 Java 代码片段"
     />
     <button class="submit-btn" :disabled="props.submitting" @click="onSubmit">
-      {{ props.submitting ? 'Submitting...' : 'Submit Review' }}
+      {{ props.submitting ? '提交中...' : '提交分析' }}
     </button>
   </section>
 </template>

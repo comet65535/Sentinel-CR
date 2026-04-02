@@ -4,6 +4,14 @@ import { createReviewEventSource, createReviewTask, fetchReviewTask } from '../a
 import EventTimeline from '../components/EventTimeline.vue'
 import ReviewForm from '../components/ReviewForm.vue'
 import type { ReviewEvent, ReviewTaskStatus } from '../types/review'
+import {
+  AGGREGATED_EVENT_TYPES,
+  SSE_EVENT_TYPES,
+  buildEventSummary,
+  getEventTitle,
+  summarizePayload,
+  toStatusText,
+} from '../utils/reviewEventView'
 
 const DEFAULT_SNIPPET = `public class Demo {
     public String greet(String name) {
@@ -20,6 +28,7 @@ const taskStatus = ref<'IDLE' | ReviewTaskStatus>('IDLE')
 const events = ref<ReviewEvent[]>([])
 const submitting = ref(false)
 const errorMessage = ref('')
+const debugMode = ref(false)
 
 let eventSource: EventSource | null = null
 
@@ -27,38 +36,56 @@ const sortedEvents = computed(() =>
   [...events.value].sort((left, right) => left.sequence - right.sequence)
 )
 
-const SSE_EVENT_TYPES = [
-  'task_created',
-  'analysis_started',
-  'ast_parsing_started',
-  'ast_parsing_completed',
-  'symbol_graph_started',
-  'symbol_graph_completed',
-  'semgrep_scan_started',
-  'semgrep_scan_completed',
-  'semgrep_scan_warning',
-  'analyzer_completed',
-  'review_completed',
-  'review_failed',
-  'heartbeat',
-] as const
-
-const AGGREGATED_EVENT_TYPES = new Set<string>([
-  'task_created',
-  'analysis_started',
-  'ast_parsing_completed',
-  'symbol_graph_completed',
-  'semgrep_scan_completed',
-  'semgrep_scan_warning',
-  'analyzer_completed',
-  'review_completed',
-  'review_failed',
-  'heartbeat',
-])
-
 const displayEvents = computed(() =>
-  sortedEvents.value.filter((event) => AGGREGATED_EVENT_TYPES.has(event.eventType))
+  // 默认展示聚合事件，Debug 模式展示完整细粒度事件。
+  debugMode.value
+    ? sortedEvents.value
+    : sortedEvents.value.filter((event) => AGGREGATED_EVENT_TYPES.has(event.eventType))
 )
+
+const reviewResult = computed<Record<string, unknown> | null>(() => {
+  const completed = [...sortedEvents.value]
+    .reverse()
+    .find((event) => event.eventType === 'review_completed')
+  if (!completed) return null
+  if (completed.payload && typeof completed.payload.result === 'object' && completed.payload.result !== null) {
+    return completed.payload.result as Record<string, unknown>
+  }
+  return completed.payload as Record<string, unknown>
+})
+
+const analyzerSummary = computed<Record<string, unknown>>(() => {
+  const result = reviewResult.value
+  const analyzer = result?.analyzer
+  if (typeof analyzer === 'object' && analyzer !== null) {
+    return analyzer as Record<string, unknown>
+  }
+  return {}
+})
+
+const resultStats = computed(() => {
+  const result = reviewResult.value ?? {}
+  const analyzer = analyzerSummary.value
+  const symbols = Array.isArray(result.symbols) ? result.symbols : []
+  const issues = Array.isArray(result.issues) ? result.issues : []
+  const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : []
+
+  return {
+    issuesCount: issues.length,
+    classesCount: toNumber(analyzer.classesCount),
+    methodsCount: toNumber(analyzer.methodsCount),
+    fieldsCount: toNumber(analyzer.fieldsCount),
+    symbolsCount: symbols.length,
+    diagnosticsCount: diagnostics.length,
+  }
+})
+
+const semgrepStatus = computed(() => {
+  const eventTypes = new Set(sortedEvents.value.map((event) => event.eventType))
+  if (eventTypes.has('semgrep_scan_warning')) return '降级'
+  if (eventTypes.has('semgrep_scan_completed')) return '正常'
+  return '未执行'
+})
 
 function isTaskFinished(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED'
@@ -96,7 +123,7 @@ function subscribeEventStream(nextTaskId: string) {
       const event = JSON.parse(messageEvent.data) as ReviewEvent
       upsertEvent(event)
     } catch {
-      errorMessage.value = 'Failed to parse server event payload.'
+      errorMessage.value = '服务端事件解析失败。'
     }
   }
 
@@ -108,7 +135,7 @@ function subscribeEventStream(nextTaskId: string) {
   })
 
   source.onopen = () => {
-    if (errorMessage.value === 'Event stream was interrupted.') {
+    if (errorMessage.value === '事件流连接中断。') {
       errorMessage.value = ''
     }
   }
@@ -125,17 +152,17 @@ function subscribeEventStream(nextTaskId: string) {
       if (isTaskFinished(latestTask.status)) {
         closeEventSource()
       } else {
-        errorMessage.value = 'Event stream was interrupted.'
+        errorMessage.value = '事件流连接中断。'
       }
     } catch {
-      errorMessage.value = 'Event stream error and task status check failed.'
+      errorMessage.value = '事件流出错，且任务状态查询失败。'
     }
   }
 }
 
 async function submitReview() {
   if (!code.value.trim()) {
-    errorMessage.value = 'Code input cannot be empty.'
+    errorMessage.value = '代码输入不能为空。'
     return
   }
 
@@ -159,7 +186,7 @@ async function submitReview() {
     if (error instanceof Error) {
       errorMessage.value = error.message
     } else {
-      errorMessage.value = 'Request failed.'
+      errorMessage.value = '请求失败。'
     }
   } finally {
     submitting.value = false
@@ -169,30 +196,69 @@ async function submitReview() {
 onBeforeUnmount(() => {
   closeEventSource()
 })
+
+function toNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
 </script>
 
 <template>
   <main class="page">
     <section class="headline">
-      <p class="eyebrow">Sentinel-CR Day0</p>
-      <h1>Frontend -> Backend -> Mock AI -> SSE</h1>
+      <p class="eyebrow">Sentinel-CR Day 2</p>
+      <h1>Day 2 Analyzer · Tree-sitter + Symbol Graph + Semgrep</h1>
       <p class="hint">
-        Submit a Java snippet and watch the event stream move to completion.
+        提交一段 Java 代码，观察 Analyzer 事件流、结构化结果与诊断信息。
       </p>
     </section>
 
     <ReviewForm v-model:code="code" :submitting="submitting" @submit="submitReview" />
 
     <section class="panel meta">
-      <p><strong>Task ID:</strong> {{ taskId || '-' }}</p>
-      <p><strong>Status:</strong> {{ taskStatus }}</p>
+      <p><strong>任务 ID：</strong> {{ taskId || '-' }}</p>
+      <p><strong>任务状态：</strong> {{ toStatusText(taskStatus) }}</p>
+      <label class="debug-toggle">
+        <input v-model="debugMode" type="checkbox" />
+        <span>Debug 视图（显示全部细粒度事件）</span>
+      </label>
+    </section>
+
+    <section class="panel result-card">
+      <header class="result-header">
+        <h2>Day 2 结果摘要</h2>
+        <p>{{ reviewResult ? '已生成结构化结果' : '等待 review_completed 事件' }}</p>
+      </header>
+      <div class="result-grid">
+        <p><strong>问题数：</strong>{{ resultStats.issuesCount }}</p>
+        <p><strong>类数量：</strong>{{ resultStats.classesCount }}</p>
+        <p><strong>方法数量：</strong>{{ resultStats.methodsCount }}</p>
+        <p><strong>字段数量：</strong>{{ resultStats.fieldsCount }}</p>
+        <p><strong>符号数量：</strong>{{ resultStats.symbolsCount }}</p>
+        <p><strong>诊断数量：</strong>{{ resultStats.diagnosticsCount }}</p>
+        <p><strong>Semgrep 状态：</strong>{{ semgrepStatus }}</p>
+        <p><strong>当前任务状态：</strong>{{ toStatusText(taskStatus) }}</p>
+      </div>
     </section>
 
     <section v-if="errorMessage" class="panel error-box">
       {{ errorMessage }}
     </section>
 
-    <EventTimeline :events="displayEvents" />
+    <EventTimeline
+      :events="displayEvents"
+      :debug-mode="debugMode"
+      :get-title="getEventTitle"
+      :get-summary="buildEventSummary"
+      :summarize-payload="summarizePayload"
+    />
+    <p class="mode-note">
+      {{ debugMode ? 'Debug 模式：展示全部细粒度事件（含 *_started）。' : '默认模式：仅展示聚合阶段事件。' }}
+    </p>
   </main>
 </template>
 
@@ -206,7 +272,7 @@ onBeforeUnmount(() => {
 
 .headline h1 {
   margin: 0.1rem 0;
-  font-size: clamp(1.4rem, 4vw, 2rem);
+  font-size: clamp(1.35rem, 4vw, 1.9rem);
   color: #153243;
 }
 
@@ -232,12 +298,46 @@ onBeforeUnmount(() => {
 }
 
 .meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
+  display: grid;
+  gap: 0.35rem;
 }
 
 .meta p {
+  margin: 0;
+  color: #214455;
+}
+
+.debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #1e4d63;
+  font-size: 0.92rem;
+}
+
+.result-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.result-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #173647;
+}
+
+.result-header p {
+  margin: 0.25rem 0 0;
+  color: #567488;
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem 1rem;
+}
+
+.result-grid p {
   margin: 0;
   color: #214455;
 }
@@ -246,5 +346,17 @@ onBeforeUnmount(() => {
   border-color: #d78989;
   background: #fff3f3;
   color: #9f3333;
+}
+
+.mode-note {
+  margin: -0.25rem 0 0;
+  color: #597286;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 720px) {
+  .result-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
