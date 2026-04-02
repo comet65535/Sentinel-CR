@@ -72,6 +72,7 @@ STRATEGY_HINT_MAPPING = {
     "resource_leak": "try_with_resources",
     "missing_validation": "input_validation",
     "bad_exception_handling": "exception_logging",
+    "syntax_error": "syntax_fix",
 }
 
 
@@ -316,6 +317,8 @@ def _infer_fix_scope(owner_classes: list[str]) -> str:
 
 def _normalize_issue_type(issue: dict[str, Any]) -> str:
     raw = issue["issue_type_raw"].lower()
+    if "syntax_error" in raw or "parse_error" in raw or "ast_parse_error" in raw:
+        return "syntax_error"
     if "null" in raw and ("pointer" in raw or "deref" in raw):
         return "null_pointer"
     if "sql" in raw and "injection" in raw:
@@ -339,6 +342,8 @@ def _resolve_requires_test(
     fix_scope: str,
     owner_classes: list[str],
 ) -> bool:
+    if issue_type == "syntax_error":
+        return False
     if issue_type in HIGH_RISK_TYPE_TOKENS:
         return True
     if severity in {"HIGH", "CRITICAL"}:

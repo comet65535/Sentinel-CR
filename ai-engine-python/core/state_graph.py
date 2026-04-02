@@ -145,6 +145,7 @@ async def run_day3_state_graph(request: InternalReviewRunRequest) -> AsyncIterat
                     "importsCount": int(ast_summary.get("importsCount", 0)),
                     "hasParseErrors": bool(ast_result.get("errors")),
                     "parseErrorsCount": len(ast_result.get("errors", []) or []),
+                    "syntaxIssuesCount": len(ast_result.get("syntaxIssues", []) or []),
                 },
             ),
         )

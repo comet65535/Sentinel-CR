@@ -61,3 +61,33 @@ def test_internal_review_run_returns_day3_ndjson_stream() -> None:
     assert "repair_plan" in final_event["payload"]
     assert "issue_graph" in final_event["payload"]["result"]
     assert "repair_plan" in final_event["payload"]["result"]
+
+
+def test_internal_review_run_broken_java_reports_syntax_issue() -> None:
+    request_body = {
+        "taskId": "rev_test_syntax_001",
+        "codeText": """
+public class Demo {
+    public String greet(String name) {
+        if (name == null) {
+            return "hello"
+        }
+    }
+}
+""".strip(),
+        "language": "java",
+        "sourceType": "snippet",
+        "metadata": {},
+    }
+
+    response = client.post("/internal/reviews/run", json=request_body)
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line.strip()]
+    events = [json.loads(line) for line in lines]
+
+    final_payload = events[-1]["payload"]["result"]
+    issues = final_payload["issues"]
+    assert len(issues) > 0
+    assert any((item.get("type") or item.get("issueType")) == "syntax_error" for item in issues)
+    assert len(final_payload["issue_graph"]["nodes"]) > 0
+    assert len(final_payload["repair_plan"]) > 0

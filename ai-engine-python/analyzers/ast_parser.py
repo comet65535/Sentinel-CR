@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from typing import Any
@@ -23,11 +23,14 @@ def parse_java_code(code_text: str) -> dict[str, Any]:
         "imports": [],
         "classes": [],
         "errors": [],
+        "syntaxIssues": [],
         "summary": {
             "classesCount": 0,
             "methodsCount": 0,
             "fieldsCount": 0,
             "importsCount": 0,
+            "parseErrorsCount": 0,
+            "syntaxIssuesCount": 0,
         },
         "diagnostics": [],
     }
@@ -52,12 +55,17 @@ def parse_java_code(code_text: str) -> dict[str, Any]:
     package_name = _extract_package(root, source_bytes)
     imports = _extract_imports(root, source_bytes)
     classes = _extract_classes(root, source_bytes, package_name)
-    parse_errors = _collect_parse_errors(root)
+
+    structural_errors = _collect_parse_errors(root)
+    heuristic_errors = _collect_heuristic_parse_errors(code_text, classes)
+    parse_errors = _dedupe_parse_errors(structural_errors + heuristic_errors)
+    syntax_issues = _build_syntax_issues(parse_errors, classes)
 
     result["package"] = package_name
     result["imports"] = imports
     result["classes"] = classes
     result["errors"] = parse_errors
+    result["syntaxIssues"] = syntax_issues
 
     methods_count = sum(len(class_item["methods"]) for class_item in classes)
     fields_count = sum(len(class_item["fields"]) for class_item in classes)
@@ -67,6 +75,8 @@ def parse_java_code(code_text: str) -> dict[str, Any]:
         "methodsCount": methods_count,
         "fieldsCount": fields_count,
         "importsCount": len(imports),
+        "parseErrorsCount": len(parse_errors),
+        "syntaxIssuesCount": len(syntax_issues),
     }
 
     if parse_errors:
@@ -76,7 +86,10 @@ def parse_java_code(code_text: str) -> dict[str, Any]:
                 "java ast parsing completed with recoverable errors",
                 source="ast_parser",
                 level="warning",
-                details={"errorsCount": len(parse_errors)},
+                details={
+                    "errorsCount": len(parse_errors),
+                    "syntaxIssuesCount": len(syntax_issues),
+                },
             )
         )
 
@@ -248,11 +261,22 @@ def _extract_modifiers(node: Any, source_bytes: bytes) -> list[str]:
 def _collect_parse_errors(root: Any) -> list[dict[str, Any]]:
     errors: list[dict[str, Any]] = []
     for node in _walk_nodes(root):
-        if node.type != "ERROR":
+        is_error = node.type == "ERROR"
+        is_missing = bool(getattr(node, "is_missing", False))
+        if not is_error and not is_missing:
             continue
+
+        if is_missing:
+            message = "Missing token or incomplete syntax"
+            kind = "missing_node"
+        else:
+            message = "Malformed syntax near this location"
+            kind = "error_node"
+
         errors.append(
             {
-                "message": "recoverable parse error",
+                "kind": kind,
+                "message": message,
                 "nodeType": node.type,
                 "startLine": _start_line(node),
                 "endLine": _end_line(node),
@@ -261,6 +285,234 @@ def _collect_parse_errors(root: Any) -> list[dict[str, Any]]:
             }
         )
     return errors
+
+
+def _collect_heuristic_parse_errors(code_text: str, classes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lines = code_text.splitlines()
+    errors: list[dict[str, Any]] = []
+
+    brace_delta = 0
+    paren_delta = 0
+    for line_no, raw_line in enumerate(lines, start=1):
+        sanitized = _strip_strings(raw_line)
+        brace_delta += sanitized.count("{") - sanitized.count("}")
+        paren_delta += sanitized.count("(") - sanitized.count(")")
+
+        stripped = sanitized.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+
+        if stripped.endswith(("+", "-", "*", "/", "&&", "||", "=")):
+            errors.append(
+                {
+                    "kind": "incomplete_statement",
+                    "message": "Incomplete expression or statement",
+                    "startLine": line_no,
+                    "endLine": line_no,
+                    "startColumn": max(1, len(raw_line.rstrip())),
+                    "endColumn": max(1, len(raw_line.rstrip()) + 1),
+                }
+            )
+
+        if _looks_like_missing_semicolon(stripped):
+            errors.append(
+                {
+                    "kind": "missing_semicolon",
+                    "message": "Missing semicolon or incomplete statement",
+                    "startLine": line_no,
+                    "endLine": line_no,
+                    "startColumn": max(1, len(raw_line.rstrip())),
+                    "endColumn": max(1, len(raw_line.rstrip()) + 1),
+                }
+            )
+
+    if brace_delta != 0:
+        errors.append(
+            {
+                "kind": "brace_mismatch",
+                "message": "Unmatched curly braces detected",
+                "startLine": max(1, len(lines)),
+                "endLine": max(1, len(lines)),
+                "startColumn": 1,
+                "endColumn": 1,
+            }
+        )
+
+    if paren_delta != 0:
+        errors.append(
+            {
+                "kind": "paren_mismatch",
+                "message": "Unmatched parentheses detected",
+                "startLine": max(1, len(lines)),
+                "endLine": max(1, len(lines)),
+                "startColumn": 1,
+                "endColumn": 1,
+            }
+        )
+
+    errors.extend(_collect_method_body_heuristics(lines, classes))
+    return errors
+
+
+def _collect_method_body_heuristics(
+    lines: list[str],
+    classes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for class_item in classes:
+        owner_class = str(class_item.get("name") or "")
+        for method in class_item.get("methods", []) or []:
+            method_name = str(method.get("name") or "")
+            return_type = str(method.get("returnType") or "").strip()
+            body_start = method.get("bodyStartLine")
+            body_end = method.get("bodyEndLine")
+
+            if body_start is None or body_end is None:
+                errors.append(
+                    {
+                        "kind": "method_body_incomplete",
+                        "message": f"Incomplete method body for {owner_class}.{method_name}",
+                        "startLine": int(method.get("startLine") or 1),
+                        "endLine": int(method.get("endLine") or method.get("startLine") or 1),
+                        "startColumn": 1,
+                        "endColumn": 1,
+                    }
+                )
+                continue
+
+            if not return_type or return_type.lower() == "void":
+                continue
+
+            start_index = max(int(body_start) - 1, 0)
+            end_index = min(int(body_end), len(lines))
+            body_lines = lines[start_index:end_index]
+            body_compact = [line.strip() for line in body_lines if line.strip() and line.strip() not in {"{", "}"}]
+            if not body_compact:
+                errors.append(
+                    {
+                        "kind": "missing_return",
+                        "message": f"Non-void method {owner_class}.{method_name} is missing return statement",
+                        "startLine": int(method.get("startLine") or 1),
+                        "endLine": int(method.get("endLine") or method.get("startLine") or 1),
+                        "startColumn": 1,
+                        "endColumn": 1,
+                    }
+                )
+                continue
+
+            has_return = any(re.search(r"\breturn\b", line) for line in body_compact)
+            if not has_return:
+                errors.append(
+                    {
+                        "kind": "missing_return",
+                        "message": f"Non-void method {owner_class}.{method_name} is missing return statement",
+                        "startLine": int(method.get("startLine") or 1),
+                        "endLine": int(method.get("endLine") or method.get("startLine") or 1),
+                        "startColumn": 1,
+                        "endColumn": 1,
+                    }
+                )
+    return errors
+
+
+def _build_syntax_issues(
+    parse_errors: list[dict[str, Any]],
+    classes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    sorted_errors = sorted(
+        parse_errors,
+        key=lambda item: (
+            int(item.get("startLine") or 1),
+            int(item.get("startColumn") or 1),
+            str(item.get("message") or ""),
+        ),
+    )
+    issues: list[dict[str, Any]] = []
+    for index, error in enumerate(sorted_errors, start=1):
+        line = int(error.get("startLine") or 1)
+        column = int(error.get("startColumn") or 1)
+        related_symbols = _resolve_related_symbols_for_line(line, classes)
+        issue_id = f"AST-{index}"
+        issue = {
+            "issue_id": issue_id,
+            "issueId": issue_id,
+            "type": "syntax_error",
+            "issueType": "syntax_error",
+            "severity": "HIGH",
+            "message": str(error.get("message") or "Syntax error"),
+            "line": line,
+            "column": column,
+            "startLine": line,
+            "endLine": int(error.get("endLine") or line),
+            "startColumn": column,
+            "endColumn": int(error.get("endColumn") or column),
+            "location": f"snippet.java:{line}",
+            "rule_id": "AST_PARSE_ERROR",
+            "ruleId": "AST_PARSE_ERROR",
+            "source": "ast_parser",
+            "engine": "tree-sitter",
+            "category": "syntax",
+            "related_symbols": related_symbols,
+            "relatedSymbols": related_symbols,
+        }
+        issues.append(issue)
+    return issues
+
+
+def _resolve_related_symbols_for_line(line: int, classes: list[dict[str, Any]]) -> list[str]:
+    symbols: set[str] = set()
+    for class_item in classes:
+        class_name = str(class_item.get("name") or "")
+        class_start = int(class_item.get("startLine") or 1)
+        class_end = int(class_item.get("endLine") or class_start)
+        if class_start <= line <= class_end and class_name:
+            symbols.add(class_name)
+
+        for method in class_item.get("methods", []) or []:
+            method_name = str(method.get("name") or "")
+            method_start = int(method.get("startLine") or class_start)
+            method_end = int(method.get("endLine") or method_start)
+            if method_start <= line <= method_end and class_name and method_name:
+                symbols.add(f"{class_name}.{method_name}")
+    return sorted(symbols)
+
+
+def _dedupe_parse_errors(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for item in items:
+        key = (
+            int(item.get("startLine") or 1),
+            int(item.get("startColumn") or 1),
+            int(item.get("endLine") or item.get("startLine") or 1),
+            str(item.get("message") or ""),
+            str(item.get("kind") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def _looks_like_missing_semicolon(stripped_line: str) -> bool:
+    if not stripped_line:
+        return False
+    if stripped_line.endswith((";", "{", "}", ",", ":")):
+        return False
+    if re.match(r"^(if|for|while|switch|catch|else|do|try)\b", stripped_line):
+        return False
+    if re.match(r"^(class|interface|enum|record)\b", stripped_line):
+        return False
+    if re.match(r"^(public|private|protected)\b.*\)$", stripped_line):
+        return False
+    if "=" in stripped_line or re.search(r"\breturn\b", stripped_line) or re.search(r"\bthrow\b", stripped_line):
+        return True
+    return False
+
+
+def _strip_strings(line: str) -> str:
+    return re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', line)
 
 
 def _child_text(node: Any, source_bytes: bytes, field_name: str) -> str | None:

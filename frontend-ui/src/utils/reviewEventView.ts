@@ -81,8 +81,13 @@ export function buildEventSummary(event: ReviewEvent): string {
       return '分析任务已启动。'
     case 'ast_parsing_started':
       return '正在解析 Java AST。'
-    case 'ast_parsing_completed':
+    case 'ast_parsing_completed': {
+      const parseCount = toCount(payload.syntaxIssuesCount ?? payload.parseErrorsCount)
+      if (parseCount > 0) {
+        return `AST 解析完成（检测到 ${parseCount} 个解析错误）`
+      }
       return `AST 解析完成（${toCount(payload.classesCount)} 个类，${toCount(payload.methodsCount)} 个方法，${toCount(payload.fieldsCount)} 个字段）`
+    }
     case 'symbol_graph_started':
       return '正在构建符号图。'
     case 'symbol_graph_completed':
@@ -98,6 +103,10 @@ export function buildEventSummary(event: ReviewEvent): string {
       if (!summary) {
         return '分析器处理完成。'
       }
+      const syntaxCount = toCount(summary.syntaxErrorsCount)
+      if (syntaxCount > 0) {
+        return `分析器处理完成（问题 ${toCount(summary.issuesCount)}，其中 ${syntaxCount} 个为语法错误）`
+      }
       return `分析器处理完成（问题 ${toCount(summary.issuesCount)}，符号 ${toCount(summary.symbolsCount)}）`
     }
     case 'planner_started':
@@ -110,6 +119,10 @@ export function buildEventSummary(event: ReviewEvent): string {
       return `规划器处理完成（问题 ${toCount(payload.issueCount)}，计划 ${toCount(payload.planCount)}）`
     case 'review_completed': {
       const result = (payload.result ?? payload) as Record<string, unknown>
+      const syntaxCount = countSyntaxIssues(result.issues)
+      if (syntaxCount > 0) {
+        return `分析完成：${toArrayCount(result.issues)} 个问题，其中 ${syntaxCount} 个为语法错误`
+      }
       return `分析完成：${toArrayCount(result.issues)} 个问题，${toArrayCount(result.symbols)} 个符号，${toArrayCount(result.diagnostics)} 条诊断`
     }
     case 'review_failed':
@@ -131,6 +144,7 @@ export function summarizePayload(payload: Record<string, unknown>): string {
     pair('methods', maybeCount(payload.methodsCount)),
     pair('symbols', maybeCount(payload.symbolsCount)),
     pair('issues', maybeCount(payload.issuesCount)),
+    pair('parseErrors', maybeCount(payload.syntaxIssuesCount ?? payload.parseErrorsCount)),
     pair('plans', maybeCount(payload.planCount)),
     pair('code', code),
   ].filter((item): item is string => Boolean(item))
@@ -140,6 +154,17 @@ export function summarizePayload(payload: Record<string, unknown>): string {
   const keys = Object.keys(payload)
   if (keys.length === 0) return '空 payload'
   return `字段：${keys.join(', ')}`
+}
+
+export function countSyntaxIssues(value: unknown): number {
+  if (!Array.isArray(value)) return 0
+  return value.filter((item) => {
+    if (typeof item !== 'object' || item === null) return false
+    const record = item as Record<string, unknown>
+    const issueType = String(record.type ?? record.issueType ?? '').toLowerCase()
+    const ruleId = String(record.ruleId ?? record.rule_id ?? '').toUpperCase()
+    return issueType === 'syntax_error' || issueType === 'parse_error' || ruleId === 'AST_PARSE_ERROR'
+  }).length
 }
 
 function toWarningMessage(payload: Record<string, unknown>): string {

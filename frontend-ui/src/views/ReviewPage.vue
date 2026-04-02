@@ -8,6 +8,7 @@ import {
   AGGREGATED_EVENT_TYPES,
   SSE_EVENT_TYPES,
   buildEventSummary,
+  countSyntaxIssues,
   getEventTitle,
   summarizePayload,
   toStatusText,
@@ -66,6 +67,8 @@ const resultStats = computed(() => {
   const symbols = Array.isArray(result.symbols) ? result.symbols : []
   const issues = Array.isArray(result.issues) ? result.issues : []
   const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : []
+  const parseErrorsFromIssues = countSyntaxIssues(issues)
+  const parseErrorsFromSummary = toNumber(analyzer.syntaxErrorsCount)
   const repairPlan = Array.isArray(result.repair_plan) ? result.repair_plan : []
   const issueGraph = isObject(result.issue_graph) ? (result.issue_graph as Record<string, unknown>) : {}
   const graphNodes = Array.isArray(issueGraph.nodes) ? issueGraph.nodes : []
@@ -78,6 +81,7 @@ const resultStats = computed(() => {
     fieldsCount: toNumber(analyzer.fieldsCount),
     symbolsCount: symbols.length,
     diagnosticsCount: diagnostics.length,
+    parseErrorsCount: Math.max(parseErrorsFromIssues, parseErrorsFromSummary),
     issueGraphNodesCount: graphNodes.length,
     issueGraphEdgesCount: graphEdges.length,
     repairPlanCount: repairPlan.length,
@@ -248,12 +252,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
         <p><strong>字段数量：</strong>{{ resultStats.fieldsCount }}</p>
         <p><strong>符号数量：</strong>{{ resultStats.symbolsCount }}</p>
         <p><strong>诊断数量：</strong>{{ resultStats.diagnosticsCount }}</p>
+        <p><strong>解析错误数：</strong>{{ resultStats.parseErrorsCount }}</p>
         <p><strong>问题图节点：</strong>{{ resultStats.issueGraphNodesCount }}</p>
         <p><strong>问题图边：</strong>{{ resultStats.issueGraphEdgesCount }}</p>
         <p><strong>修复计划项：</strong>{{ resultStats.repairPlanCount }}</p>
         <p><strong>Semgrep 状态：</strong>{{ semgrepStatus }}</p>
         <p><strong>当前任务状态：</strong>{{ toStatusText(taskStatus) }}</p>
       </div>
+      <p v-if="resultStats.parseErrorsCount > 0" class="parse-warning">
+        检测到语法/解析错误，请先修复语法问题再进行后续修复规划。
+      </p>
     </section>
 
     <section v-if="errorMessage" class="panel error-box">
@@ -355,6 +363,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
 .result-grid p {
   margin: 0;
   color: #214455;
+}
+
+.parse-warning {
+  margin: 0.2rem 0 0;
+  color: #a3471e;
+  background: #fff4ea;
+  border: 1px solid #efc4a9;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
 }
 
 .error-box {

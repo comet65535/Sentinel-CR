@@ -139,3 +139,45 @@ public class CleanService {
 
     assert issue_graph == {"schema_version": "day3.v1", "nodes": [], "edges": []}
     assert repair_plan == []
+
+
+def test_day3_case6_broken_java_surfaces_syntax_errors_in_planner_outputs() -> None:
+    events = _run_review(
+        """
+public class Demo {
+    public String greet(String name) {
+        if (name == null) {
+            return "hello"
+        }
+    }
+""".strip(),
+        task_id="rev_day3_case6",
+    )
+    event_types = [event["eventType"] for event in events]
+    assert event_types[0:6] == [
+        "analysis_started",
+        "ast_parsing_started",
+        "ast_parsing_completed",
+        "symbol_graph_started",
+        "symbol_graph_completed",
+        "semgrep_scan_started",
+    ]
+    assert event_types[6] in {"semgrep_scan_completed", "semgrep_scan_warning"}
+    assert event_types[7:] == [
+        "analyzer_completed",
+        "planner_started",
+        "issue_graph_built",
+        "repair_plan_created",
+        "planner_completed",
+        "review_completed",
+    ]
+
+    payload = events[-1]["payload"]
+    issues = payload["result"]["issues"]
+    assert len(issues) > 0
+    assert any((item.get("type") or item.get("issueType")) == "syntax_error" for item in issues)
+
+    assert "issue_graph" in payload["result"]
+    assert "issue_graph" in payload
+    assert len(payload["result"]["issue_graph"]["nodes"]) > 0
+    assert len(payload["result"]["repair_plan"]) > 0

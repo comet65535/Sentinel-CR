@@ -225,3 +225,89 @@ def test_state_graph_fails_on_unsupported_language() -> None:
     assert [event["eventType"] for event in events] == ["analysis_started", "review_failed"]
     diagnostics = events[-1]["payload"]["diagnostics"]
     assert any(item.get("code") == "UNSUPPORTED_LANGUAGE" for item in diagnostics)
+
+
+def test_state_graph_propagates_syntax_issue_into_final_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.parse_java_code",
+        lambda code: {
+            "language": "java",
+            "package": None,
+            "imports": [],
+            "classes": [],
+            "errors": [
+                {
+                    "message": "Missing semicolon or incomplete statement",
+                    "startLine": 4,
+                    "startColumn": 22,
+                    "endLine": 4,
+                    "endColumn": 23,
+                }
+            ],
+            "syntaxIssues": [
+                {
+                    "issue_id": "AST-1",
+                    "type": "syntax_error",
+                    "severity": "HIGH",
+                    "message": "Missing semicolon or incomplete statement",
+                    "line": 4,
+                    "column": 22,
+                    "location": "snippet.java:4",
+                    "rule_id": "AST_PARSE_ERROR",
+                    "source": "ast_parser",
+                    "related_symbols": [],
+                }
+            ],
+            "summary": {
+                "classesCount": 0,
+                "methodsCount": 0,
+                "fieldsCount": 0,
+                "importsCount": 0,
+                "parseErrorsCount": 1,
+                "syntaxIssuesCount": 1,
+            },
+            "diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        "core.state_graph.build_symbol_graph",
+        lambda code, ast: {
+            "symbols": [],
+            "relations": [],
+            "summary": {
+                "classesCount": 0,
+                "methodsCount": 0,
+                "fieldsCount": 0,
+                "callEdgesCount": 0,
+                "variableRefsCount": 0,
+            },
+            "diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [],
+            "summary": {
+                "issuesCount": 0,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+    request = InternalReviewRunRequest(
+        taskId="rev_state_graph_syntax",
+        codeText="public class Demo {",
+        language="java",
+        sourceType="snippet",
+    )
+    events = _run_graph(request)
+
+    completed_payload = events[-1]["payload"]
+    assert completed_payload["result"]["issues"]
+    assert completed_payload["result"]["issues"][0]["type"] == "syntax_error"
+    assert completed_payload["result"]["issue_graph"]["nodes"]
+    assert completed_payload["result"]["repair_plan"]

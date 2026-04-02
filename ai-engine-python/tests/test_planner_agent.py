@@ -63,3 +63,42 @@ def test_run_planner_agent_returns_graph_plan_and_summary() -> None:
         "high_severity_count": 1,
         "requires_test_count": sum(1 for node in graph["nodes"] if node["requires_test"]),
     }
+
+
+def test_run_planner_agent_handles_syntax_error_input() -> None:
+    issues = [
+        {
+            "issue_id": "AST-1",
+            "type": "syntax_error",
+            "severity": "HIGH",
+            "message": "Missing semicolon or incomplete statement",
+            "line": 4,
+            "column": 18,
+            "source": "ast_parser",
+            "rule_id": "AST_PARSE_ERROR",
+            "related_symbols": ["Demo.greet"],
+        }
+    ]
+    symbols = [
+        {
+            "symbolId": "method:Demo.greet(String)",
+            "kind": "method",
+            "name": "greet",
+            "ownerClass": "Demo",
+            "signature": "String greet(String name)",
+            "startLine": 2,
+            "endLine": 6,
+        }
+    ]
+
+    output = run_planner_agent(issues=issues, symbols=symbols, context_summary={})
+    graph = output["issue_graph"]
+    plan = output["repair_plan"]
+
+    assert len(graph["nodes"]) == 1
+    assert graph["nodes"][0]["type"] == "syntax_error"
+    assert graph["nodes"][0]["strategy_hint"] == "syntax_fix"
+    assert graph["nodes"][0]["requires_test"] is False
+
+    assert len(plan) == 1
+    assert plan[0]["strategy"] == "syntax_fix"

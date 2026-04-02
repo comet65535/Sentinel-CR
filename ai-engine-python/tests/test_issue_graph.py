@@ -129,3 +129,43 @@ def test_build_repair_plan_is_stable_and_sorted() -> None:
     assert [item["issue_id"] for item in plan] == ["ISSUE-1", "ISSUE-2"]
     assert [item["priority"] for item in plan] == [1, 2]
     assert plan == sorted(plan, key=lambda item: (item["priority"], item["issue_id"]))
+
+
+def test_build_issue_graph_supports_syntax_error_strategy() -> None:
+    issues = [
+        {
+            "issue_id": "AST-1",
+            "type": "syntax_error",
+            "severity": "HIGH",
+            "message": "Missing semicolon or incomplete statement",
+            "line": 4,
+            "column": 22,
+            "source": "ast_parser",
+            "rule_id": "AST_PARSE_ERROR",
+            "related_symbols": ["Demo.greet"],
+        }
+    ]
+    symbols = [
+        {
+            "symbolId": "method:Demo.greet(String)",
+            "name": "greet",
+            "ownerClass": "Demo",
+            "startLine": 2,
+            "endLine": 6,
+        }
+    ]
+
+    graph = build_issue_graph(issues=issues, symbols=symbols, context_summary={})
+    assert len(graph["nodes"]) == 1
+
+    node = graph["nodes"][0]
+    assert node["issue_id"] == "AST-1"
+    assert node["type"] == "syntax_error"
+    assert node["fix_scope"] == "single_file"
+    assert node["strategy_hint"] == "syntax_fix"
+    assert node["requires_test"] is False
+
+    plan = build_repair_plan(graph)
+    assert len(plan) == 1
+    assert plan[0]["issue_id"] == "AST-1"
+    assert plan[0]["strategy"] == "syntax_fix"

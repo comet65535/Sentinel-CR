@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
@@ -41,6 +41,52 @@ public class UserService {
     assert class_item["endLine"] >= class_item["startLine"]
 
 
+@pytest.mark.skipif(not _has_parser_support(), reason="tree-sitter-java is not available in this environment")
+@pytest.mark.parametrize(
+    "code_text",
+    [
+        """
+public class Demo {
+    public String greet(String name) {
+        return \"hello\"
+    }
+}
+""".strip(),
+        """
+public class Demo {
+    public int add(int a, int b) {
+        return a + b;
+""".strip(),
+        """
+public class Demo {
+    public int calc(int a) {
+        int b =
+    }
+}
+""".strip(),
+        """
+public class Demo {
+    public String greet(String name) {
+        String value = name;
+    }
+}
+""".strip(),
+    ],
+)
+def test_parse_java_code_generates_syntax_issues_for_broken_snippets(code_text: str) -> None:
+    result = parse_java_code(code_text)
+
+    assert isinstance(result, dict)
+    assert "syntaxIssues" in result
+    assert len(result["syntaxIssues"]) >= 1
+
+    issue = result["syntaxIssues"][0]
+    assert issue["type"] == "syntax_error"
+    assert issue["severity"] == "HIGH"
+    assert issue["ruleId"] == "AST_PARSE_ERROR"
+    assert issue["source"] == "ast_parser"
+
+
 def test_parse_java_code_handles_invalid_snippet_without_crashing() -> None:
     code = "public class Broken { public void x( {"
     result = parse_java_code(code)
@@ -50,3 +96,6 @@ def test_parse_java_code_handles_invalid_snippet_without_crashing() -> None:
     assert "diagnostics" in result
     diagnostic_codes = {item.get("code") for item in result["diagnostics"]}
     assert diagnostic_codes.intersection({"AST_PARSE_PARTIAL", "AST_PARSE_FAILED"})
+
+    if "AST_PARSE_FAILED" not in diagnostic_codes:
+        assert len(result.get("syntaxIssues", [])) >= 1
