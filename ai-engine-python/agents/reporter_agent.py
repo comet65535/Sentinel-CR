@@ -14,6 +14,19 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     verification_result = _sanitize_verification(state.verification_result)
     verified_level = str((verification_result or {}).get("verified_level") or "L0")
     final_outcome = _resolve_final_outcome(state=state, patch_artifact=patch_artifact, verification_result=verification_result)
+    failed_stage = _resolve_failed_stage(state=state, verification_result=verification_result, final_outcome=final_outcome)
+    failure_reason = _resolve_failure_reason(state=state, verification_result=verification_result, final_outcome=final_outcome)
+    retry_exhausted = bool(
+        final_outcome == "failed_after_retries" and state.enable_verifier and state.retry_count >= state.max_retries
+    )
+    user_message = _build_user_message(
+        final_outcome=final_outcome,
+        failed_stage=failed_stage,
+        failure_reason=failure_reason,
+        retry_count=state.retry_count,
+        retry_exhausted=retry_exhausted,
+        has_syntax_issues=_has_syntax_issues(state.issues),
+    )
 
     analyzer_block = state.analyzer_summary
     patch_block = _build_patch_block(patch_artifact, patch_status)
@@ -26,6 +39,10 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "retry_count": state.retry_count,
         "verified_level": verified_level,
         "final_outcome": final_outcome,
+        "failed_stage": failed_stage,
+        "failure_reason": failure_reason,
+        "retry_exhausted": retry_exhausted,
+        "user_message": user_message,
     }
 
     result_block = {
@@ -173,3 +190,90 @@ def _sanitize_attempt(attempt: dict[str, Any]) -> dict[str, Any]:
         "failure_detail": failure_detail,
         "memory_case_ids": attempt.get("memory_case_ids", []),
     }
+
+
+def _resolve_failed_stage(
+    *,
+    state: EngineState,
+    verification_result: dict[str, Any] | None,
+    final_outcome: str,
+) -> str | None:
+    if final_outcome == "verified_patch":
+        return None
+    if verification_result is not None:
+        stage = verification_result.get("failed_stage")
+        if isinstance(stage, str) and stage.strip():
+            return stage.strip()
+    for attempt in reversed(state.attempts):
+        stage = attempt.get("failure_stage") or attempt.get("failed_stage")
+        if isinstance(stage, str) and stage.strip():
+            return stage.strip()
+    if _has_syntax_issues(state.issues):
+        return "analyzer"
+    return None
+
+
+def _resolve_failure_reason(
+    *,
+    state: EngineState,
+    verification_result: dict[str, Any] | None,
+    final_outcome: str,
+) -> str | None:
+    if final_outcome == "verified_patch":
+        return None
+    if verification_result is not None:
+        stages = verification_result.get("stages", []) or []
+        for stage in stages:
+            if stage.get("status") == "failed":
+                reason = str(stage.get("reason") or "").strip()
+                if reason:
+                    return reason
+                stderr_summary = str(stage.get("stderr_summary") or "").strip()
+                if stderr_summary:
+                    return stderr_summary
+    for attempt in reversed(state.attempts):
+        reason = str(attempt.get("failure_reason") or "").strip()
+        if reason:
+            return reason
+    if _has_syntax_issues(state.issues):
+        return "syntax_issues_detected"
+    return None
+
+
+def _build_user_message(
+    *,
+    final_outcome: str,
+    failed_stage: str | None,
+    failure_reason: str | None,
+    retry_count: int,
+    retry_exhausted: bool,
+    has_syntax_issues: bool,
+) -> str:
+    if final_outcome == "verified_patch":
+        return "Patch verified at L1 or above."
+    if final_outcome == "patch_generated_unverified":
+        return "Patch generated. Verifier was not executed."
+    if final_outcome == "failed_no_patch":
+        if has_syntax_issues:
+            return "Analyzer detected syntax issues. Please fix syntax errors before retrying."
+        return "No valid patch was generated."
+    if final_outcome == "failed_after_retries":
+        stage_text = failed_stage or "verifier"
+        if retry_exhausted:
+            return (
+                f"Verification failed at {stage_text}. Retry budget exhausted after {retry_count} retries."
+            )
+        return f"Verification failed at {stage_text}."
+
+    if failure_reason:
+        return f"Review did not complete successfully: {failure_reason}"
+    return "Review did not complete successfully."
+
+
+def _has_syntax_issues(issues: list[dict[str, Any]]) -> bool:
+    for issue in issues:
+        issue_type = str(issue.get("type") or issue.get("issueType") or issue.get("issue_type") or "").lower()
+        rule_id = str(issue.get("rule_id") or issue.get("ruleId") or "").upper()
+        if issue_type in {"syntax_error", "parse_error"} or rule_id == "AST_PARSE_ERROR":
+            return True
+    return False

@@ -48,7 +48,12 @@ public class ReviewService {
 
         String taskId = generateTaskId();
         ReviewTask task =
-                new ReviewTask(taskId, request.getCodeText(), request.getLanguage(), request.getSourceType());
+                new ReviewTask(
+                        taskId,
+                        request.getCodeText(),
+                        request.getLanguage(),
+                        request.getSourceType(),
+                        request.getOptions());
         taskRepository.save(task);
         reviewEventBus.initializeTaskStream(taskId);
 

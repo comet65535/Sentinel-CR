@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
@@ -25,87 +27,78 @@ def _run_review(code_text: str, *, task_id: str, options: dict[str, Any] | None 
     return [json.loads(line) for line in lines]
 
 
-def _verification_success_l1() -> dict[str, Any]:
+def _require_javac() -> None:
+    if shutil.which("javac") is None:
+        pytest.skip("javac is required for real verifier acceptance test")
+
+
+def _build_fixer_output(diff_content: str, attempt_no: int) -> dict[str, Any]:
     return {
-        "status": "passed",
-        "verified_level": "L1",
-        "passed_stages": ["patch_apply", "compile"],
-        "failed_stage": None,
-        "stages": [
-            {
-                "stage": "patch_apply",
-                "status": "passed",
-                "exit_code": 0,
-                "stdout_summary": "patch applied",
-                "stderr_summary": "",
-                "reason": None,
-                "retryable": False,
-            },
-            {
-                "stage": "compile",
-                "status": "passed",
-                "exit_code": 0,
-                "stdout_summary": "javac succeeded",
-                "stderr_summary": "",
-                "reason": None,
-                "retryable": False,
-            },
-            {
-                "stage": "lint",
-                "status": "skipped",
-                "exit_code": None,
-                "stdout_summary": "",
-                "stderr_summary": "",
-                "reason": "lint command not configured",
-                "retryable": False,
-            },
-            {
-                "stage": "test",
-                "status": "skipped",
-                "exit_code": None,
-                "stdout_summary": "",
-                "stderr_summary": "",
-                "reason": "test command not configured",
-                "retryable": False,
-            },
-            {
-                "stage": "security_rescan",
-                "status": "skipped",
-                "exit_code": None,
-                "stdout_summary": "",
-                "stderr_summary": "",
-                "reason": "security rescan disabled",
-                "retryable": False,
-            },
-        ],
-        "summary": "verification passed at L1",
-        "retryable": False,
-        "failure_reason": None,
+        "ok": True,
+        "patch_artifact": {
+            "patch_id": f"patch_attempt_{attempt_no}",
+            "attempt_no": attempt_no,
+            "status": "generated",
+            "format": "unified_diff",
+            "content": diff_content,
+            "explanation": "forced patch for day5 real verifier test",
+            "risk_level": "low",
+            "target_files": ["snippet.java"],
+            "strategy_used": "test_stub",
+            "memory_case_ids": [],
+        },
+        "attempt": {
+            "attempt_no": attempt_no,
+            "patch_id": f"patch_attempt_{attempt_no}",
+            "status": "generated",
+            "verified_level": "L0",
+            "failure_stage": None,
+            "failure_reason": None,
+            "failure_detail": None,
+            "memory_case_ids": [],
+        },
     }
 
 
-def test_day5_l1_success_path_with_review_completed(monkeypatch) -> None:
-    monkeypatch.setattr("core.state_graph.run_verifier_agent", lambda **kwargs: _verification_success_l1())
+def test_day5_real_verifier_l1_success(monkeypatch) -> None:
+    _require_javac()
+    def _stub_fixer(**kwargs: Any) -> dict[str, Any]:
+        return _build_fixer_output(
+            "\n".join(
+                [
+                    "diff --git a/snippet.java b/snippet.java",
+                    "--- a/snippet.java",
+                    "+++ b/snippet.java",
+                    "@@ -1,5 +1,6 @@",
+                    " class snippet {",
+                    "     void run() {",
+                    "         System.out.println(\"ok\");",
+                    "+        int verified = 1;",
+                    "     }",
+                    " }",
+                ]
+            ),
+            int(kwargs.get("attempt_no") or 1),
+        )
+
+    monkeypatch.setattr(
+        "core.state_graph.run_fixer_agent",
+        _stub_fixer,
+    )
 
     events = _run_review(
         """
 class snippet {
-    String greet(String name) {
-        if (name == null) {
-            return "hi";
-        }
-        return "hi " + name;
+    void run() {
+        System.out.println("ok");
     }
 }
 """.strip(),
-        task_id="rev_day5_l1_success",
-        options={"enable_verifier": True, "max_retries": 1},
+        task_id="rev_day5_real_success",
+        options={"enable_verifier": True, "max_retries": 1, "enable_security_rescan": False},
     )
     event_types = [event["eventType"] for event in events]
 
-    assert "patch_generated" in event_types
-    assert "fixer_completed" in event_types
-    assert "verifier_started" in event_types
     assert "patch_apply_started" in event_types
     assert "patch_apply_completed" in event_types
     assert "compile_started" in event_types
@@ -114,97 +107,68 @@ class snippet {
     assert event_types.count("review_completed") == 1
     assert "review_failed" not in event_types
 
-    idx_verifier_started = event_types.index("verifier_started")
-    idx_patch_apply_completed = event_types.index("patch_apply_completed")
-    idx_compile_completed = event_types.index("compile_completed")
-    idx_verifier_completed = event_types.index("verifier_completed")
-    idx_review_completed = event_types.index("review_completed")
-    assert idx_verifier_started < idx_patch_apply_completed < idx_compile_completed < idx_verifier_completed < idx_review_completed
-
     payload = events[-1]["payload"]
     result = payload["result"]
-    assert result["patch"]["status"] == "generated"
-    assert result["summary"]["final_outcome"] == "verified_patch"
-    assert result["summary"]["verified_level"] == "L1"
+    summary = result["summary"]
+    assert summary["final_outcome"] == "verified_patch"
+    assert summary["verified_level"] == "L1"
+    assert summary["failed_stage"] is None
+    assert summary["retry_exhausted"] is False
     assert result["verification"]["verified_level"] == "L1"
-    assert any(item["status"] == "skipped" for item in result["verification"]["stages"])
-    assert result["attempts"][0]["status"] == "generated"
 
 
-def test_day5_compile_failed_then_retry_success(monkeypatch) -> None:
-    call_count = {"value": 0}
+def test_day5_real_verifier_compile_failed_after_retry(monkeypatch) -> None:
+    _require_javac()
+    def _stub_fixer(**kwargs: Any) -> dict[str, Any]:
+        return _build_fixer_output(
+            "\n".join(
+                [
+                    "diff --git a/snippet.java b/snippet.java",
+                    "--- a/snippet.java",
+                    "+++ b/snippet.java",
+                    "@@ -1,5 +1,6 @@",
+                    " class snippet {",
+                    "     void run() {",
+                    "         System.out.println(\"ok\");",
+                    "+        UnknownType missing = null;",
+                    "     }",
+                    " }",
+                ]
+            ),
+            int(kwargs.get("attempt_no") or 1),
+        )
 
-    def _verifier_with_retry(**kwargs) -> dict[str, Any]:
-        call_count["value"] += 1
-        if call_count["value"] == 1:
-            return {
-                "status": "failed",
-                "verified_level": "L0",
-                "passed_stages": ["patch_apply"],
-                "failed_stage": "compile",
-                "stages": [
-                    {
-                        "stage": "patch_apply",
-                        "status": "passed",
-                        "exit_code": 0,
-                        "stdout_summary": "patch applied",
-                        "stderr_summary": "",
-                        "reason": None,
-                        "retryable": False,
-                    },
-                    {
-                        "stage": "compile",
-                        "status": "failed",
-                        "exit_code": 1,
-                        "stdout_summary": "",
-                        "stderr_summary": "cannot find symbol UserDTO",
-                        "reason": "compile_failed",
-                        "retryable": True,
-                    },
-                ],
-                "summary": "verification failed at compile",
-                "retryable": True,
-                "failure_reason": "compile_failed",
-            }
-        return _verification_success_l1()
-
-    monkeypatch.setattr("core.state_graph.run_verifier_agent", _verifier_with_retry)
+    monkeypatch.setattr(
+        "core.state_graph.run_fixer_agent",
+        _stub_fixer,
+    )
 
     events = _run_review(
         """
 class snippet {
     void run() {
-        System.out.println("x");
+        System.out.println("ok");
     }
 }
 """.strip(),
-        task_id="rev_day5_retry_success",
-        options={"enable_verifier": True, "max_retries": 1},
+        task_id="rev_day5_real_compile_fail",
+        options={"enable_verifier": True, "max_retries": 1, "enable_security_rescan": False},
     )
     event_types = [event["eventType"] for event in events]
 
+    assert "patch_apply_completed" in event_types
     assert "compile_failed" in event_types
     assert "verifier_failed" in event_types
     assert "review_retry_scheduled" in event_types
     assert "review_retry_started" in event_types
-    assert event_types.count("fixer_started") == 2
-    assert event_types.count("verifier_started") == 2
     assert event_types.count("review_completed") == 1
     assert "review_failed" not in event_types
 
-    failed_compile_event = next(event for event in events if event["eventType"] == "compile_failed")
-    assert failed_compile_event["payload"]["reason"] == "compile_failed"
-    assert failed_compile_event["payload"]["retryable"] is True
-
     payload = events[-1]["payload"]
     result = payload["result"]
-    assert result["summary"]["retry_count"] == 1
-    assert result["summary"]["attempt_count"] == 2
-    assert result["summary"]["final_outcome"] == "verified_patch"
-    assert result["verification"]["status"] == "passed"
-    assert result["verification"]["verified_level"] == "L1"
-
-    attempts = result["attempts"]
-    assert attempts[0]["status"] == "failed"
-    assert attempts[0]["failure_stage"] == "compile"
-    assert attempts[1]["status"] == "generated"
+    summary = result["summary"]
+    assert summary["final_outcome"] == "failed_after_retries"
+    assert summary["failed_stage"] == "compile"
+    assert summary["retry_exhausted"] is True
+    assert isinstance(summary["user_message"], str) and summary["user_message"]
+    assert result["verification"]["status"] == "failed"

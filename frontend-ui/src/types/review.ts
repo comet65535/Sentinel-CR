@@ -4,6 +4,11 @@ export interface CreateReviewRequest {
   codeText: string
   language: 'java'
   sourceType: 'snippet'
+  options?: {
+    enable_verifier?: boolean
+    max_retries?: number
+    enable_security_rescan?: boolean
+  }
 }
 
 export interface CreateReviewResponse {

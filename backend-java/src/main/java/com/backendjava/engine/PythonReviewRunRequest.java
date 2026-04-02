@@ -7,5 +7,6 @@ public record PythonReviewRunRequest(
         String codeText,
         String language,
         String sourceType,
+        Map<String, Object> options,
         Map<String, Object> metadata) {
 }

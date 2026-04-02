@@ -33,6 +33,7 @@ public class PythonAiEngineAdapter implements AiEngineAdapter {
                 task.getCodeText(),
                 task.getLanguage(),
                 task.getSourceType(),
+                task.getOptions(),
                 Map.of("requestedBy", "backend-java", "debug", false));
 
         return webClient.post()

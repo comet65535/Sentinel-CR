@@ -12,116 +12,114 @@ const emit = defineEmits<{
   (event: 'new-analysis'): void
 }>()
 
-const historyItems = [
-  { id: 'hist-1', title: 'Null Guard Patch', time: 'Today' },
-  { id: 'hist-2', title: 'SQL Injection Fix', time: 'Yesterday' },
-  { id: 'hist-3', title: 'Resource Leak Check', time: 'Earlier' },
+const placeholderHistory = [
+  { id: 'h1', title: '空指针修复演练', subtitle: '今天' },
+  { id: 'h2', title: 'SQL 参数化检查', subtitle: '昨天' },
+  { id: 'h3', title: '编译失败重试样例', subtitle: '更早' },
 ]
 
-const taskSummary = computed(() => {
-  if (!props.taskId) return '当前无任务'
+const taskLabel = computed(() => {
+  if (!props.taskId) return '当前暂无任务'
   return `${props.taskId} · ${toStatusText(props.taskStatus)}`
 })
-
-function onNewAnalysis() {
-  emit('new-analysis')
-}
 </script>
 
 <template>
   <aside class="sidebar">
-    <button class="new-btn" type="button" @click="onNewAnalysis">新建分析</button>
+    <button class="new-chat" type="button" @click="emit('new-analysis')">+ 新建分析</button>
 
-    <section class="group">
-      <p class="group-title">历史任务</p>
-      <ul class="history-list">
-        <li v-for="item in historyItems" :key="item.id" class="history-item">
-          <p class="history-title">{{ item.title }}</p>
-          <p class="history-time">{{ item.time }}</p>
-        </li>
-      </ul>
-    </section>
+    <div class="section">
+      <p class="section-title">历史会话</p>
+      <button v-for="item in placeholderHistory" :key="item.id" class="history-item" type="button">
+        <span class="history-title">{{ item.title }}</span>
+        <span class="history-subtitle">{{ item.subtitle }}</span>
+      </button>
+    </div>
 
-    <section class="group current-task">
-      <p class="group-title">当前任务</p>
-      <p class="task-text">{{ taskSummary }}</p>
-    </section>
+    <div class="section current">
+      <p class="section-title">当前任务</p>
+      <p class="current-text">{{ taskLabel }}</p>
+    </div>
   </aside>
 </template>
 
 <style scoped>
 .sidebar {
   background: #f5f7fb;
-  border: 1px solid #d9e0ea;
-  border-radius: 14px;
+  border: 1px solid #e1e7ef;
+  border-radius: 16px;
   padding: 0.9rem;
   display: grid;
   gap: 1rem;
-  min-height: calc(100vh - 2.6rem);
+  min-height: calc(100vh - 2.4rem);
   align-content: start;
 }
 
-.new-btn {
-  border: 1px solid #176891;
-  background: #176891;
-  color: #fff;
-  border-radius: 999px;
-  padding: 0.5rem 0.85rem;
-  font-weight: 700;
+.new-chat {
+  border: 1px solid #cdd8e7;
+  background: #fff;
+  color: #21465b;
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  font-weight: 600;
   cursor: pointer;
+  text-align: left;
 }
 
-.group {
-  display: grid;
-  gap: 0.5rem;
+.new-chat:hover {
+  background: #eef3fb;
 }
 
-.group-title {
-  margin: 0;
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #547084;
-  font-weight: 700;
-}
-
-.history-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.section {
   display: grid;
   gap: 0.45rem;
 }
 
+.section-title {
+  margin: 0;
+  font-size: 0.73rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6f8294;
+  font-weight: 700;
+}
+
 .history-item {
-  border: 1px solid #d9e3ee;
+  border: 1px solid transparent;
+  background: transparent;
   border-radius: 10px;
-  background: #fff;
-  padding: 0.5rem 0.6rem;
+  padding: 0.45rem 0.5rem;
+  display: grid;
+  gap: 0.1rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.history-item:hover {
+  background: #e9f0fb;
+  border-color: #d4e1f1;
 }
 
 .history-title {
-  margin: 0;
-  color: #1b3e51;
-  font-size: 0.9rem;
-}
-
-.history-time {
-  margin: 0.2rem 0 0;
-  color: #688397;
-  font-size: 0.78rem;
-}
-
-.current-task {
-  border-top: 1px dashed #c7d3df;
-  padding-top: 0.7rem;
-}
-
-.task-text {
-  margin: 0;
-  color: #2f5064;
+  color: #213f53;
   font-size: 0.88rem;
+}
+
+.history-subtitle {
+  color: #72879c;
+  font-size: 0.76rem;
+}
+
+.current {
+  border-top: 1px solid #dde5f0;
+  padding-top: 0.75rem;
+}
+
+.current-text {
+  margin: 0;
+  color: #2f4f64;
   line-break: anywhere;
+  font-size: 0.84rem;
 }
 
 @media (max-width: 1100px) {
@@ -130,4 +128,3 @@ function onNewAnalysis() {
   }
 }
 </style>
-

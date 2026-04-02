@@ -1,15 +1,10 @@
 ﻿<script setup lang="ts">
-import type { ReviewEvent } from '../types/review'
-import type { StageProgressItem } from '../utils/reviewEventView'
+import type { ReadableStageTimelineItem } from '../utils/reviewEventView'
 
 const props = defineProps<{
   open: boolean
-  selectedStage: StageProgressItem | null
-  stageEvents: ReviewEvent[]
+  timeline: ReadableStageTimelineItem[]
   debugMode: boolean
-  getTitle: (eventType: string) => string
-  getSummary: (event: ReviewEvent) => string
-  summarizePayload: (payload: Record<string, unknown>) => string
 }>()
 
 const emit = defineEmits<{
@@ -20,12 +15,12 @@ function closePanel() {
   emit('close')
 }
 
-function formatTime(value: string): string {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
-  return parsed.toLocaleTimeString()
+function statusText(status: ReadableStageTimelineItem['status']): string {
+  if (status === 'completed') return '已完成'
+  if (status === 'running') return '进行中'
+  if (status === 'failed') return '失败'
+  if (status === 'skipped') return '已跳过'
+  return '未开始'
 }
 
 function stringify(value: unknown): string {
@@ -39,34 +34,30 @@ function stringify(value: unknown): string {
 
 <template>
   <aside v-if="open" class="detail-panel">
-    <header class="detail-header">
+    <header class="header">
       <div>
-        <p class="detail-eyebrow">阶段详情</p>
-        <h2>{{ selectedStage?.title ?? '未选择阶段' }}</h2>
+        <p class="eyebrow">过程详情</p>
+        <h2>系统处理过程</h2>
       </div>
-      <button class="close-btn" type="button" @click="closePanel">关闭</button>
+      <button type="button" class="close-btn" @click="closePanel">关闭</button>
     </header>
 
-    <p v-if="selectedStage" class="stage-hint">{{ selectedStage.hint }}</p>
-    <p v-else class="stage-hint">点击任意进度胶囊可查看该阶段明细。</p>
-
-    <p v-if="stageEvents.length === 0" class="placeholder">当前阶段暂无事件。</p>
-
-    <ul v-else class="event-list">
-      <li v-for="event in stageEvents" :key="event.sequence" class="event-item">
-        <div class="event-head">
-          <strong>{{ getTitle(event.eventType) }}</strong>
-          <span>#{{ event.sequence }} · {{ formatTime(event.timestamp) }}</span>
+    <ul class="timeline-list">
+      <li v-for="stage in timeline" :key="stage.key" class="timeline-item" :class="`state-${stage.status}`">
+        <div class="item-head">
+          <h3>{{ stage.title }}</h3>
+          <span>{{ statusText(stage.status) }}</span>
         </div>
-        <p class="event-summary">{{ getSummary(event) }}</p>
+        <p class="description">{{ stage.description }}</p>
+        <p class="summary">{{ stage.summary }}</p>
+        <p v-if="stage.failureReason" class="failure">失败原因：{{ stage.failureReason }}</p>
 
-        <template v-if="debugMode">
-          <p class="event-meta"><strong>eventType:</strong> <code>{{ event.eventType }}</code></p>
-          <p class="event-meta"><strong>message:</strong> {{ event.message }}</p>
-          <pre class="event-payload">{{ stringify(event.payload) }}</pre>
-        </template>
-        <template v-else>
-          <p class="event-meta"><strong>payload:</strong> {{ summarizePayload(event.payload) }}</p>
+        <template v-if="debugMode && stage.events.length > 0">
+          <div class="debug-block" v-for="event in stage.events" :key="event.sequence">
+            <p><strong>{{ event.eventType }}</strong> · #{{ event.sequence }}</p>
+            <p>{{ event.message }}</p>
+            <pre>{{ stringify(event.payload) }}</pre>
+          </div>
         </template>
       </li>
     </ul>
@@ -75,60 +66,50 @@ function stringify(value: unknown): string {
 
 <style scoped>
 .detail-panel {
-  width: 360px;
-  border: 1px solid #d7e1eb;
-  border-radius: 14px;
+  width: 380px;
+  border: 1px solid #dbe3ee;
   background: #fff;
+  border-radius: 16px;
   padding: 0.9rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.8rem;
   align-content: start;
-  max-height: calc(100vh - 2.6rem);
+  max-height: calc(100vh - 2.4rem);
   overflow: auto;
 }
 
-.detail-header {
+.header {
   display: flex;
-  align-items: start;
   justify-content: space-between;
+  align-items: start;
   gap: 0.6rem;
 }
 
-.detail-eyebrow {
+.eyebrow {
   margin: 0;
-  font-size: 0.74rem;
-  color: #648093;
-  letter-spacing: 0.08em;
+  font-size: 0.72rem;
   text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #708597;
   font-weight: 700;
 }
 
-.detail-header h2 {
-  margin: 0.15rem 0 0;
-  color: #17394c;
-  font-size: 1.02rem;
+.header h2 {
+  margin: 0.12rem 0 0;
+  color: #183d52;
+  font-size: 1.04rem;
 }
 
 .close-btn {
-  border: 1px solid #c6d4e2;
-  border-radius: 999px;
+  border: 1px solid #cfd9e8;
   background: #f8fbff;
-  color: #254b5f;
-  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  color: #264a60;
+  padding: 0.32rem 0.7rem;
   cursor: pointer;
 }
 
-.stage-hint {
-  margin: 0;
-  color: #4f697d;
-}
-
-.placeholder {
-  margin: 0;
-  color: #597286;
-}
-
-.event-list {
+.timeline-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -136,46 +117,94 @@ function stringify(value: unknown): string {
   gap: 0.6rem;
 }
 
-.event-item {
-  border: 1px solid #e1e8f0;
-  border-radius: 10px;
-  background: #f9fbfe;
-  padding: 0.6rem;
+.timeline-item {
+  border: 1px solid #e0e8f2;
+  border-radius: 12px;
+  background: #fbfdff;
+  padding: 0.62rem;
+  display: grid;
+  gap: 0.32rem;
 }
 
-.event-head {
+.item-head {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
-  color: #1f4b62;
-  font-size: 0.85rem;
+  gap: 0.4rem;
+  align-items: center;
 }
 
-.event-summary {
-  margin: 0.35rem 0;
-  color: #22485c;
+.item-head h3 {
+  margin: 0;
+  color: #1f455a;
+  font-size: 0.95rem;
 }
 
-.event-meta {
+.item-head span {
+  font-size: 0.8rem;
+  color: #446379;
+}
+
+.description,
+.summary,
+.failure {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.description {
+  color: #5f7688;
+}
+
+.summary {
+  color: #274e63;
+}
+
+.failure {
+  color: #a24444;
+}
+
+.state-running {
+  border-color: #8fb7de;
+  background: #f1f8ff;
+}
+
+.state-completed {
+  border-color: #a1cfb0;
+  background: #edf9f1;
+}
+
+.state-failed {
+  border-color: #d9a0a0;
+  background: #fff4f4;
+}
+
+.state-skipped {
+  border-color: #d9dee8;
+  background: #f7f9fc;
+}
+
+.debug-block {
+  border-top: 1px dashed #cfd9e8;
+  padding-top: 0.4rem;
+  margin-top: 0.15rem;
+}
+
+.debug-block p {
   margin: 0.2rem 0;
-  color: #4f697c;
-  font-size: 0.83rem;
+  color: #3f5f74;
+  font-size: 0.82rem;
 }
 
-.event-meta code {
-  font-family: 'JetBrains Mono', 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
-}
-
-.event-payload {
-  margin: 0.35rem 0 0;
-  background: #f0f5fb;
-  border: 1px solid #d6dfeb;
-  border-radius: 8px;
-  padding: 0.5rem;
+.debug-block pre {
+  margin: 0.2rem 0 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.78rem;
-  color: #2b4c5f;
+  border: 1px solid #d9e2f0;
+  background: #f4f8fd;
+  border-radius: 8px;
+  padding: 0.45rem;
+  font-size: 0.76rem;
+  color: #2f4f63;
 }
 
 @media (max-width: 1100px) {
@@ -185,4 +214,3 @@ function stringify(value: unknown): string {
   }
 }
 </style>
-

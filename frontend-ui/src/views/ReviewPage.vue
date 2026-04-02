@@ -1,7 +1,6 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { createReviewEventSource, createReviewTask, fetchReviewTask } from '../api/review'
-import ProgressHeader from '../components/ProgressHeader.vue'
 import ResultSummaryCard from '../components/ResultSummaryCard.vue'
 import ReviewForm from '../components/ReviewForm.vue'
 import ReviewSidebar from '../components/ReviewSidebar.vue'
@@ -9,13 +8,11 @@ import StageDetailPanel from '../components/StageDetailPanel.vue'
 import type { ReviewEvent, ReviewTaskStatus } from '../types/review'
 import {
   SSE_EVENT_TYPES,
-  buildEventSummary,
-  buildStageProgress,
-  eventsForStage,
-  getEventTitle,
-  summarizePayload,
+  buildConversationItems,
+  buildReadableCurrentStatus,
+  buildReadableStageTimeline,
+  extractResultStats,
   toStatusText,
-  type StageKey,
 } from '../utils/reviewEventView'
 
 const DEFAULT_SNIPPET = `class snippet {
@@ -28,6 +25,7 @@ const DEFAULT_SNIPPET = `class snippet {
 }`
 
 const code = ref(DEFAULT_SNIPPET)
+const submittedCode = ref('')
 const taskId = ref('')
 const taskStatus = ref<'IDLE' | ReviewTaskStatus>('IDLE')
 const events = ref<ReviewEvent[]>([])
@@ -35,33 +33,10 @@ const submitting = ref(false)
 const errorMessage = ref('')
 const debugMode = ref(false)
 const detailPanelOpen = ref(false)
-const selectedStageKey = ref<StageKey | null>(null)
 
 let eventSource: EventSource | null = null
 
 const sortedEvents = computed(() => [...events.value].sort((left, right) => left.sequence - right.sequence))
-
-const stageItems = computed(() => buildStageProgress(sortedEvents.value, taskStatus.value))
-
-const currentStage = computed(() => {
-  return (
-    stageItems.value.find((item) => item.status === 'active') ||
-    stageItems.value.find((item) => item.status === 'failed') ||
-    [...stageItems.value].reverse().find((item) => item.status === 'completed') ||
-    stageItems.value[0] ||
-    null
-  )
-})
-
-const selectedStage = computed(
-  () => stageItems.value.find((item) => item.key === selectedStageKey.value) || currentStage.value
-)
-
-const selectedStageEvents = computed(() => {
-  const stageKey = selectedStage.value?.key
-  if (!stageKey) return []
-  return eventsForStage(stageKey, sortedEvents.value)
-})
 
 const reviewResult = computed<Record<string, unknown> | null>(() => {
   const completed = [...sortedEvents.value]
@@ -74,42 +49,48 @@ const reviewResult = computed<Record<string, unknown> | null>(() => {
   return completed.payload as Record<string, unknown>
 })
 
-const resultStats = computed(() => {
-  const result = reviewResult.value ?? {}
-  const summary = isObject(result.summary) ? (result.summary as Record<string, unknown>) : {}
-  const memory = isObject(result.memory) ? (result.memory as Record<string, unknown>) : {}
-  const patch = isObject(result.patch) ? (result.patch as Record<string, unknown>) : {}
+const currentStatusLine = computed(() =>
+  buildReadableCurrentStatus(sortedEvents.value, reviewResult.value)
+)
 
-  return {
-    issueCount: toArrayCount(result.issues),
-    repairPlanCount: toArrayCount(result.repair_plan),
-    memoryMatchCount: toArrayCount(memory.matches),
-    attemptCount: toArrayCount(result.attempts),
-    patchStatus: typeof patch.status === 'string' ? patch.status : '-',
-    finalOutcome: typeof summary.final_outcome === 'string' ? summary.final_outcome : '-',
-    verifiedLevel: typeof summary.verified_level === 'string' ? summary.verified_level : 'L0',
+const conversationItems = computed(() =>
+  buildConversationItems(
+    sortedEvents.value,
+    reviewResult.value,
+    submittedCode.value,
+    currentStatusLine.value
+  )
+)
+
+const stageTimeline = computed(() =>
+  buildReadableStageTimeline(sortedEvents.value, reviewResult.value)
+)
+
+const resultStats = computed(() => {
+  if (!reviewResult.value) {
+    return {
+      issueCount: 0,
+      repairPlanCount: 0,
+      memoryMatchCount: 0,
+      attemptCount: 0,
+      retryCount: 0,
+      patchStatus: '-',
+      finalOutcome: '-',
+      verifiedLevel: 'L0',
+      failedStage: '-',
+      failureReason: '-',
+      userMessage: '-',
+      retryExhausted: false,
+    }
   }
+  return extractResultStats(reviewResult.value)
 })
 
-watch(
-  stageItems,
-  (nextItems) => {
-    if (nextItems.length === 0) {
-      selectedStageKey.value = null
-      return
-    }
-
-    if (selectedStageKey.value && nextItems.some((item) => item.key === selectedStageKey.value)) {
-      return
-    }
-
-    selectedStageKey.value =
-      nextItems.find((item) => item.status === 'active')?.key ||
-      nextItems.find((item) => item.status === 'failed')?.key ||
-      nextItems[0].key
-  },
-  { immediate: true }
-)
+const isProcessing = computed(() => {
+  if (taskStatus.value === 'RUNNING' || taskStatus.value === 'CREATED') return true
+  if (submitting.value) return true
+  return reviewResult.value === null && events.value.length > 0
+})
 
 function isTaskFinished(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED'
@@ -195,8 +176,8 @@ async function submitReview() {
   events.value = []
   taskId.value = ''
   taskStatus.value = 'IDLE'
-  selectedStageKey.value = null
   detailPanelOpen.value = false
+  submittedCode.value = code.value
   closeEventSource()
 
   try {
@@ -204,6 +185,11 @@ async function submitReview() {
       codeText: code.value,
       language: 'java',
       sourceType: 'snippet',
+      options: {
+        enable_verifier: true,
+        max_retries: 2,
+        enable_security_rescan: false,
+      },
     })
     taskId.value = response.taskId
     taskStatus.value = response.status
@@ -219,15 +205,8 @@ async function submitReview() {
   }
 }
 
-function openStageDetail(stageKey: string) {
-  selectedStageKey.value = stageKey as StageKey
+function openDetailPanel() {
   detailPanelOpen.value = true
-}
-
-function openCurrentStageDetail() {
-  if (currentStage.value) {
-    openStageDetail(currentStage.value.key)
-  }
 }
 
 function closeDetailPanel() {
@@ -241,195 +220,287 @@ function startNewAnalysis() {
   taskStatus.value = 'IDLE'
   errorMessage.value = ''
   detailPanelOpen.value = false
-  selectedStageKey.value = null
+  submittedCode.value = ''
 }
 
 onBeforeUnmount(() => {
   closeEventSource()
 })
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function toArrayCount(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0
-}
 </script>
 
 <template>
-  <main class="page-layout">
+  <main class="layout">
     <ReviewSidebar :task-id="taskId" :task-status="taskStatus" @new-analysis="startNewAnalysis" />
 
-    <section class="workspace">
-      <section class="workspace-header panel">
-        <p class="eyebrow">Sentinel-CR Day4.5 + Day5</p>
-        <h1>Patch 验证工作台</h1>
-        <p class="hint">默认展示当前阶段与结果摘要，完整事件细节在右侧详情面板按需展开。</p>
-        <p class="status-line">
-          <strong>任务状态：</strong>{{ toStatusText(taskStatus) }}
-          <span class="task-id"><strong>任务 ID：</strong>{{ taskId || '-' }}</span>
-        </p>
+    <section class="chat-column">
+      <header class="chat-header">
+        <div class="header-actions">
+          <span class="line-label">当前进度：</span>
+          <button class="status-line" type="button" @click="openDetailPanel">
+            <span v-if="isProcessing" class="pulse-dot" />
+            <span>{{ currentStatusLine }}</span>
+          </button>
+        </div>
+
+        <div class="header-actions secondary">
+          <span class="task-text">任务：{{ taskId || '-' }} · {{ toStatusText(taskStatus) }}</span>
+          <button class="process-btn" type="button" @click="openDetailPanel">查看过程</button>
+          <label class="debug-toggle">
+            <input v-model="debugMode" type="checkbox" />
+            <span>Debug</span>
+          </label>
+        </div>
+      </header>
+
+      <section class="chat-thread">
+        <div v-if="conversationItems.length === 0" class="empty">
+          <p>把 Java 代码发给我，我会先分析，再给出补丁与验证结果。</p>
+        </div>
+
+        <article
+          v-for="item in conversationItems"
+          :key="item.id"
+          class="message"
+          :class="item.role === 'user' ? 'message-user' : 'message-assistant'"
+        >
+          <p class="sender">{{ item.title }}</p>
+          <p v-if="item.type !== 'status'" class="text">{{ item.text }}</p>
+
+          <pre v-if="item.code" class="code-block">{{ item.code }}</pre>
+
+          <button v-if="item.type === 'status'" class="status-bubble" type="button" @click="openDetailPanel">
+            <span class="pulse-dot" />
+            <span>{{ item.text }}</span>
+          </button>
+
+          <ResultSummaryCard
+            v-if="item.type === 'result'"
+            :has-result="Boolean(reviewResult)"
+            :stats="resultStats"
+            @open-process="openDetailPanel"
+          />
+        </article>
+
+        <article v-if="errorMessage" class="message message-assistant message-error">
+          <p class="sender">Sentinel-CR</p>
+          <p class="text">{{ errorMessage }}</p>
+        </article>
       </section>
 
-      <ProgressHeader :stages="stageItems" :selected-key="selectedStageKey" @select-stage="openStageDetail" />
-
-      <section class="panel current-stage-card">
-        <header>
-          <h2>当前阶段</h2>
-          <button type="button" class="detail-btn" @click="openCurrentStageDetail">查看详情</button>
-        </header>
-        <p class="current-title">{{ currentStage?.title ?? '等待任务启动' }}</p>
-        <p class="current-hint">{{ currentStage?.hint ?? '暂无阶段信息' }}</p>
-      </section>
-
-      <ResultSummaryCard :has-result="Boolean(reviewResult)" :stats="resultStats" />
-
-      <section class="panel form-panel">
+      <footer class="composer-wrap">
         <ReviewForm v-model:code="code" :submitting="submitting" @submit="submitReview" />
-      </section>
-
-      <section class="panel meta-panel">
-        <label class="debug-toggle">
-          <input v-model="debugMode" type="checkbox" />
-          <span>Debug 模式（仅影响右侧详情粒度）</span>
-        </label>
-      </section>
-
-      <section v-if="errorMessage" class="panel error-box">
-        {{ errorMessage }}
-      </section>
+      </footer>
     </section>
 
     <StageDetailPanel
       :open="detailPanelOpen"
-      :selected-stage="selectedStage"
-      :stage-events="selectedStageEvents"
+      :timeline="stageTimeline"
       :debug-mode="debugMode"
-      :get-title="getEventTitle"
-      :get-summary="buildEventSummary"
-      :summarize-payload="summarizePayload"
       @close="closeDetailPanel"
     />
   </main>
 </template>
 
 <style scoped>
-.page-layout {
+.layout {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr) auto;
+  grid-template-columns: 260px minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: start;
 }
 
-.workspace {
-  display: grid;
-  gap: 0.9rem;
+.chat-column {
   min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  min-height: calc(100vh - 2.4rem);
 }
 
-.panel {
+.chat-header {
+  border: 1px solid #dfe6f1;
   background: #fff;
-  border: 1px solid #d7e1eb;
   border-radius: 14px;
-  padding: 0.9rem;
-}
-
-.workspace-header h1 {
-  margin: 0.1rem 0;
-  font-size: clamp(1.3rem, 3vw, 1.85rem);
-  color: #153243;
-}
-
-.eyebrow {
-  margin: 0;
-  color: #176891;
-  letter-spacing: 0.08em;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-
-.hint {
-  margin: 0;
-  color: #4e687c;
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.5rem;
 }
 
 .status-line {
-  margin: 0.35rem 0 0;
-  color: #214557;
+  border: 1px solid #d1deee;
+  background: #f3f8ff;
+  color: #1f4c67;
+  border-radius: 999px;
+  padding: 0.45rem 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  cursor: pointer;
+  justify-self: start;
+}
+
+.header-actions {
   display: flex;
-  gap: 0.9rem;
+  align-items: center;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
-.current-stage-card {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.current-stage-card header {
-  display: flex;
+.header-actions.secondary {
   justify-content: space-between;
-  align-items: center;
-  gap: 0.6rem;
 }
 
-.current-stage-card h2 {
-  margin: 0;
-  color: #17384b;
-  font-size: 1rem;
+.line-label {
+  color: #5d7488;
+  font-size: 0.84rem;
 }
 
-.current-title {
-  margin: 0;
-  color: #1d4860;
-  font-weight: 700;
+.task-text {
+  color: #5d7488;
+  font-size: 0.84rem;
 }
 
-.current-hint {
-  margin: 0;
-  color: #546f82;
-}
-
-.detail-btn {
-  border: 1px solid #c9d7e5;
-  border-radius: 999px;
+.process-btn {
+  border: 1px solid #d1dcec;
   background: #f8fbff;
-  color: #1f4a61;
-  padding: 0.35rem 0.75rem;
+  color: #2b5167;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
   cursor: pointer;
-}
-
-.form-panel {
-  padding: 0;
-  overflow: hidden;
-}
-
-.meta-panel {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 
 .debug-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  color: #1e4d63;
-  font-size: 0.92rem;
+  gap: 0.35rem;
+  color: #4e677b;
+  font-size: 0.84rem;
 }
 
-.error-box {
-  border-color: #d78989;
+.chat-thread {
+  border: 1px solid #dfe6f1;
+  background: #fff;
+  border-radius: 14px;
+  padding: 0.9rem;
+  overflow: auto;
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.empty {
+  color: #5f788a;
+}
+
+.empty p {
+  margin: 0;
+}
+
+.message {
+  max-width: 92%;
+  border-radius: 14px;
+  padding: 0.7rem 0.75rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.message-user {
+  justify-self: end;
+  background: #edf4ff;
+  border: 1px solid #cfdef4;
+}
+
+.message-assistant {
+  justify-self: start;
+  background: #f8fafd;
+  border: 1px solid #dee6f0;
+}
+
+.message-error {
+  border-color: #d8a1a1;
   background: #fff3f3;
-  color: #9f3333;
+}
+
+.sender {
+  margin: 0;
+  color: #5e7587;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.text {
+  margin: 0;
+  color: #234b61;
+}
+
+.code-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid #d2deee;
+  background: #f4f8ff;
+  border-radius: 10px;
+  padding: 0.6rem;
+  color: #1c3a4f;
+  font-size: 0.82rem;
+  font-family: 'JetBrains Mono', 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
+}
+
+.status-bubble {
+  border: 1px dashed #bcd2e8;
+  background: #f2f8ff;
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #31566b;
+  cursor: pointer;
+  text-align: left;
+}
+
+.composer-wrap {
+  position: sticky;
+  bottom: 0;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2f88bc;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0.35;
+    transform: scale(0.95);
+  }
 }
 
 @media (max-width: 1100px) {
-  .page-layout {
+  .layout {
     grid-template-columns: 1fr;
+  }
+
+  .chat-column {
+    min-height: auto;
+  }
+
+  .message {
+    max-width: 100%;
   }
 }
 </style>
-

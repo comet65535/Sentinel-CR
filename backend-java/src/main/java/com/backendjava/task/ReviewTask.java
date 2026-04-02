@@ -11,6 +11,7 @@ public class ReviewTask {
     private final String codeText;
     private final String language;
     private final String sourceType;
+    private final Map<String, Object> options;
     private final AtomicLong sequenceCounter = new AtomicLong(0);
 
     private volatile ReviewTaskStatus status;
@@ -20,11 +21,16 @@ public class ReviewTask {
     private volatile String errorMessage;
 
     public ReviewTask(String taskId, String codeText, String language, String sourceType) {
+        this(taskId, codeText, language, sourceType, Map.of());
+    }
+
+    public ReviewTask(String taskId, String codeText, String language, String sourceType, Map<String, Object> options) {
         Instant now = Instant.now();
         this.taskId = taskId;
         this.codeText = codeText;
         this.language = language;
         this.sourceType = sourceType;
+        this.options = Collections.unmodifiableMap(new LinkedHashMap<>(options == null ? Map.of() : options));
         this.status = ReviewTaskStatus.CREATED;
         this.createdAt = now;
         this.updatedAt = now;
@@ -67,6 +73,10 @@ public class ReviewTask {
 
     public String getSourceType() {
         return sourceType;
+    }
+
+    public Map<String, Object> getOptions() {
+        return options;
     }
 
     public ReviewTaskStatus getStatus() {

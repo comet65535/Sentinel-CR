@@ -1,6 +1,7 @@
 package com.backendjava.api.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import java.util.Map;
 
 public class CreateReviewRequest {
     @NotBlank
@@ -11,6 +12,7 @@ public class CreateReviewRequest {
 
     @NotBlank
     private String sourceType;
+    private Map<String, Object> options = Map.of();
 
     public String getCodeText() {
         return codeText;
@@ -34,5 +36,13 @@ public class CreateReviewRequest {
 
     public void setSourceType(String sourceType) {
         this.sourceType = sourceType;
+    }
+
+    public Map<String, Object> getOptions() {
+        return options;
+    }
+
+    public void setOptions(Map<String, Object> options) {
+        this.options = options == null ? Map.of() : options;
     }
 }

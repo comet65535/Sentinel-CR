@@ -20,73 +20,63 @@ function onSubmit() {
 </script>
 
 <template>
-  <section class="panel">
-    <header class="section-header">
-      <h2>Java 代码输入</h2>
-    </header>
+  <div class="composer">
     <textarea
-      class="code-input"
+      class="composer-input"
       :value="props.code"
       @input="onInput"
-      rows="14"
+      rows="5"
       spellcheck="false"
-      placeholder="请粘贴 Java 代码片段"
+      placeholder="贴上 Java 代码，按下提交开始分析"
     />
-    <button class="submit-btn" :disabled="props.submitting" @click="onSubmit">
-      {{ props.submitting ? '提交中...' : '提交分析' }}
-    </button>
-  </section>
+    <div class="composer-actions">
+      <button class="submit-btn" :disabled="props.submitting" @click="onSubmit">
+        {{ props.submitting ? '处理中…' : '提交分析' }}
+      </button>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.panel {
-  background: #ffffff;
-  border: 1px solid #d5dce4;
-  border-radius: 14px;
-  padding: 1rem;
+.composer {
+  border: 1px solid #d8e1ec;
+  background: #fff;
+  border-radius: 16px;
+  padding: 0.75rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.55rem;
 }
 
-.section-header h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  color: #173647;
-}
-
-.code-input {
+.composer-input {
   width: 100%;
   resize: vertical;
-  border: 1px solid #b7c8d6;
-  border-radius: 10px;
-  padding: 0.75rem;
+  min-height: 110px;
+  border: none;
+  outline: none;
+  padding: 0.2rem;
   font-family: 'JetBrains Mono', 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  background: #f7fafc;
-  color: #1f2f3a;
-  box-sizing: border-box;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #1e3342;
 }
 
-.code-input:focus {
-  outline: 2px solid #3d8ac6;
-  outline-offset: 1px;
+.composer-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .submit-btn {
-  justify-self: start;
-  border: none;
+  border: 1px solid #1a6d95;
+  background: #1a6d95;
+  color: #fff;
   border-radius: 999px;
-  background: #136f9a;
-  color: #ffffff;
+  padding: 0.5rem 0.95rem;
   font-weight: 600;
-  padding: 0.55rem 1rem;
   cursor: pointer;
 }
 
 .submit-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.65;
   cursor: not-allowed;
 }
 </style>
-
