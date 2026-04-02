@@ -60,8 +60,36 @@ def _build_fixer_output(diff_content: str, attempt_no: int) -> dict[str, Any]:
     }
 
 
+def _force_issue(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "null_check_missing",
+                    "severity": "MEDIUM",
+                    "message": "force fixer path for day5 acceptance",
+                    "line": 3,
+                    "column": 9,
+                    "ruleId": "forced.day5.issue",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+
 def test_day5_real_verifier_l1_success(monkeypatch) -> None:
     _require_javac()
+    _force_issue(monkeypatch)
+
     def _stub_fixer(**kwargs: Any) -> dict[str, Any]:
         return _build_fixer_output(
             "\n".join(
@@ -119,6 +147,8 @@ class snippet {
 
 def test_day5_real_verifier_compile_failed_after_retry(monkeypatch) -> None:
     _require_javac()
+    _force_issue(monkeypatch)
+
     def _stub_fixer(**kwargs: Any) -> dict[str, Any]:
         return _build_fixer_output(
             "\n".join(
@@ -170,5 +200,6 @@ class snippet {
     assert summary["final_outcome"] == "failed_after_retries"
     assert summary["failed_stage"] == "compile"
     assert summary["retry_exhausted"] is True
+    assert isinstance(summary["failure_detail"], str) and summary["failure_detail"]
     assert isinstance(summary["user_message"], str) and summary["user_message"]
     assert result["verification"]["status"] == "failed"

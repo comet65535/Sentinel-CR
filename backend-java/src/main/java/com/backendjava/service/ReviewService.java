@@ -100,7 +100,13 @@ public class ReviewService {
                         terminalEventObserved.set(true);
                     }
                 })
-                .doOnError(throwable -> handleEngineFailure(task, throwable))
+                .doOnError(throwable -> {
+                    if (terminalEventObserved.get()) {
+                        reviewEventBus.completeTaskStream(task.getTaskId());
+                        return;
+                    }
+                    handleEngineFailure(task, throwable);
+                })
                 .doOnComplete(() -> {
                     if (terminalEventObserved.get()) {
                         reviewEventBus.completeTaskStream(task.getTaskId());

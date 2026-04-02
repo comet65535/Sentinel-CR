@@ -79,11 +79,24 @@ const resultStats = computed(() => {
       verifiedLevel: 'L0',
       failedStage: '-',
       failureReason: '-',
+      failureDetail: '-',
       userMessage: '-',
       retryExhausted: false,
+      noFixNeeded: false,
     }
   }
   return extractResultStats(reviewResult.value)
+})
+
+const patchContent = computed(() => {
+  if (!reviewResult.value) {
+    return ''
+  }
+  const patch = reviewResult.value.patch
+  if (typeof patch === 'object' && patch !== null && typeof (patch as Record<string, unknown>).content === 'string') {
+    return String((patch as Record<string, unknown>).content)
+  }
+  return ''
 })
 
 const isProcessing = computed(() => {
@@ -277,6 +290,7 @@ onBeforeUnmount(() => {
             v-if="item.type === 'result'"
             :has-result="Boolean(reviewResult)"
             :stats="resultStats"
+            :patch-content="patchContent"
             @open-process="openDetailPanel"
           />
         </article>

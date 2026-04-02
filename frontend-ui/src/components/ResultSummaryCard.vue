@@ -1,4 +1,6 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
+import PatchDiffViewer from './PatchDiffViewer.vue'
+
 const props = defineProps<{
   hasResult: boolean
   stats: {
@@ -12,9 +14,12 @@ const props = defineProps<{
     verifiedLevel: string
     failedStage: string
     failureReason: string
+    failureDetail: string
     userMessage: string
     retryExhausted: boolean
+    noFixNeeded: boolean
   }
+  patchContent: string
 }>()
 
 const emit = defineEmits<{
@@ -41,14 +46,31 @@ const emit = defineEmits<{
         <p>重试次数：{{ props.stats.retryCount }}</p>
         <p>补丁状态：{{ props.stats.patchStatus }}</p>
       </div>
+
       <p v-if="props.stats.userMessage && props.stats.userMessage !== '-'" class="message">
         {{ props.stats.userMessage }}
       </p>
+
       <p v-if="props.stats.failedStage !== '-'" class="failure">
         失败阶段：{{ props.stats.failedStage }}
         <span v-if="props.stats.failureReason && props.stats.failureReason !== '-'">（{{ props.stats.failureReason }}）</span>
         <span v-if="props.stats.retryExhausted">，重试预算已耗尽</span>
       </p>
+
+      <details
+        v-if="props.stats.failureDetail && props.stats.failureDetail !== '-'"
+        class="trace-details"
+        @click.stop
+      >
+        <summary>查看错误日志</summary>
+        <pre>{{ props.stats.failureDetail }}</pre>
+      </details>
+
+      <PatchDiffViewer
+        v-if="props.patchContent && props.stats.patchStatus === 'generated'"
+        :patch-content="props.patchContent"
+        @click.stop
+      />
     </template>
   </section>
 </template>
@@ -117,6 +139,24 @@ const emit = defineEmits<{
 .failure {
   margin: 0;
   color: #9a3f3f;
+}
+
+.trace-details summary {
+  color: #37566a;
+  cursor: pointer;
+  font-size: 0.84rem;
+}
+
+.trace-details pre {
+  margin: 0.4rem 0 0;
+  border: 1px solid #d6e0ed;
+  background: #f6f9fd;
+  border-radius: 8px;
+  padding: 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #2d4b60;
+  font-size: 0.78rem;
 }
 
 @media (max-width: 760px) {

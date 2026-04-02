@@ -98,4 +98,57 @@ class PythonAiEngineAdapterTests {
         assertThatThrownBy(() -> adapter.startReview(task).collectList().block(Duration.ofSeconds(3)))
                 .isInstanceOf(RuntimeException.class);
     }
+
+    @Test
+    void shouldAllowSlowNdjsonStreamWhenReadTimeoutDisabled() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/internal/reviews/run", exchange -> {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+
+            exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
+            exchange.sendResponseHeaders(200, 0);
+
+            try {
+                Thread.sleep(300);
+                exchange.getResponseBody()
+                        .write(("{\"taskId\":\"rev_slow_stream\",\"eventType\":\"analysis_started\",\"message\":\"started\",\"status\":\"RUNNING\",\"payload\":{}}\n")
+                                .getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+
+                Thread.sleep(300);
+                exchange.getResponseBody()
+                        .write(("{\"taskId\":\"rev_slow_stream\",\"eventType\":\"review_completed\",\"message\":\"done\",\"status\":\"COMPLETED\",\"payload\":{\"result\":{\"summary\":\"ok\"}}}\n")
+                                .getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+            } catch (InterruptedException interruptedException) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+
+        try {
+            PythonEngineProperties properties = new PythonEngineProperties();
+            properties.setMode("python");
+            properties.setPythonBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            properties.setPythonConnectTimeoutMs(1000);
+            properties.setPythonReadTimeoutMs(0);
+
+            PythonAiEngineAdapter adapter = new PythonAiEngineAdapter(properties, new EngineEventMapper());
+            ReviewTask task = new ReviewTask("rev_slow_stream", "public class Demo {}", "java", "snippet");
+
+            List<EngineEvent> events = adapter.startReview(task).collectList().block(Duration.ofSeconds(5));
+            assertThat(events).isNotNull();
+            assertThat(events).extracting(EngineEvent::eventType)
+                    .containsExactly("analysis_started", "review_completed");
+            assertThat(events.get(1).status()).isEqualTo(ReviewTaskStatus.COMPLETED);
+        } finally {
+            server.stop(0);
+        }
+    }
 }

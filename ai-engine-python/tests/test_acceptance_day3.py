@@ -23,7 +23,31 @@ def _run_review(code_text: str, *, task_id: str = "rev_day3_acceptance") -> list
     return [json.loads(line) for line in lines]
 
 
-def test_day3_case1_event_chain_contains_planner_stage() -> None:
+def test_day3_case1_event_chain_contains_planner_stage(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "sql_injection",
+                    "severity": "HIGH",
+                    "message": "string concatenation in SQL query",
+                    "line": 3,
+                    "column": 9,
+                    "ruleId": "java.lang.security.audit.sql-injection",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 1, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
     events = _run_review(
         """
 public class Demo {
@@ -105,7 +129,7 @@ def test_day3_case4_review_completed_dual_paths_exist() -> None:
     assert "repair_plan" in payload
 
 
-def test_day3_case5_empty_issue_input_still_emits_planner_events(monkeypatch) -> None:
+def test_day3_case5_empty_issue_input_short_circuits_without_patch(monkeypatch) -> None:
     monkeypatch.setattr(
         "core.state_graph.run_semgrep",
         lambda code, language="java": {
@@ -132,20 +156,24 @@ public class CleanService {
     )
     event_types = [event["eventType"] for event in events]
 
-    assert "planner_started" in event_types
-    assert "issue_graph_built" in event_types
-    assert "repair_plan_created" in event_types
-    assert "planner_completed" in event_types
-    assert "case_memory_search_started" in event_types
-    assert "case_memory_completed" in event_types
-    assert "fixer_started" in event_types
+    assert "planner_started" not in event_types
+    assert "issue_graph_built" not in event_types
+    assert "repair_plan_created" not in event_types
+    assert "planner_completed" not in event_types
+    assert "case_memory_search_started" not in event_types
+    assert "case_memory_completed" not in event_types
+    assert "fixer_started" not in event_types
+    assert event_types[-1] == "review_completed"
 
     payload = events[-1]["payload"]
-    issue_graph = payload["result"]["issue_graph"]
-    repair_plan = payload["result"]["repair_plan"]
+    result = payload["result"]
+    issue_graph = result["issue_graph"]
+    repair_plan = result["repair_plan"]
 
     assert issue_graph == {"schema_version": "day3.v1", "nodes": [], "edges": []}
     assert repair_plan == []
+    assert result["patch"]["status"] == "absent"
+    assert result["summary"]["no_fix_needed"] is True
 
 
 def test_day3_case6_broken_java_surfaces_syntax_errors_in_planner_outputs() -> None:

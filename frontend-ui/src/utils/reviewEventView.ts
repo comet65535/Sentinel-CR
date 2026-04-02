@@ -11,7 +11,9 @@ export interface ResultStats {
   retryCount: number
   failedStage: string
   failureReason: string
+  failureDetail: string
   retryExhausted: boolean
+  noFixNeeded: boolean
   userMessage: string
 }
 
@@ -31,6 +33,7 @@ export interface ReadableStageTimelineItem {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
   summary: string
   failureReason: string | null
+  detailLog: string | null
   events: ReviewEvent[]
 }
 
@@ -198,6 +201,9 @@ export function buildReadableSuccessMessage(reviewResult: Record<string, unknown
     return '处理完成。'
   }
   const stats = extractResultStats(reviewResult)
+  if (stats.noFixNeeded) {
+    return '代码健康，无需修复。已完成基础分析并直接收口。'
+  }
   return `已完成。共识别 ${stats.issueCount} 个问题，生成 ${stats.attemptCount} 次补丁尝试，最终结果 ${stats.finalOutcome}（${stats.verifiedLevel}）。`
 }
 
@@ -250,7 +256,7 @@ export function buildConversationItems(
   }
 
   const stats = reviewResult ? extractResultStats(reviewResult) : null
-  const isSuccess = stats !== null && stats.finalOutcome === 'verified_patch'
+  const isSuccess = stats !== null && (stats.finalOutcome === 'verified_patch' || stats.noFixNeeded)
   items.push({
     id: 'assistant-result',
     role: 'assistant',
@@ -268,6 +274,7 @@ export function buildReadableStageTimeline(
   reviewResult: Record<string, unknown> | null
 ): ReadableStageTimelineItem[] {
   const sorted = [...events].sort((a, b) => a.sequence - b.sequence)
+  const resultStats = reviewResult ? extractResultStats(reviewResult) : null
 
   const stages: Array<{ key: string; title: string; description: string; eventTypes: string[] }> = [
     {
@@ -369,16 +376,47 @@ export function buildReadableStageTimeline(
       const reason = extractFailureReason(failureEvent.payload)
       failureReason = reason || '该阶段失败，未提供更多原因。'
     }
+    let detailLog: string | null = failureEvent ? extractFailureDetail(failureEvent.payload) : null
+
+    if (stage.key === 'retry' && resultStats !== null) {
+      if (resultStats.retryCount > 0 && status === 'pending') {
+        status = 'running'
+        summary = `已触发 ${resultStats.retryCount} 次重试。`
+      }
+      if (resultStats.finalOutcome === 'failed_after_retries') {
+        status = 'failed'
+        summary = `已重试 ${resultStats.retryCount} 次，达到最大重试次数。`
+        failureReason = resultStats.failureReason !== '-' ? resultStats.failureReason : failureReason
+        detailLog = resultStats.failureDetail !== '-' ? resultStats.failureDetail : detailLog
+      } else if (
+        (resultStats.finalOutcome === 'verified_patch' || resultStats.noFixNeeded) &&
+        resultStats.retryCount > 0
+      ) {
+        status = 'completed'
+        summary = `重试结束，最终在第 ${resultStats.retryCount + 1} 轮收口。`
+      }
+    }
+
+    if (
+      resultStats?.noFixNeeded &&
+      ['planner', 'memory', 'fixer', 'patch_apply', 'compile', 'retry'].includes(stage.key)
+    ) {
+      status = 'skipped'
+      summary = '未发现可修复问题，已短路跳过该阶段。'
+      failureReason = null
+      detailLog = null
+    }
 
     if (stage.key === 'completed' && reviewResult) {
-      const stats = extractResultStats(reviewResult)
-      if (stats.finalOutcome === 'verified_patch') {
+      const stats = resultStats ?? extractResultStats(reviewResult)
+      if (stats.finalOutcome === 'verified_patch' || stats.noFixNeeded) {
         summary = buildReadableSuccessMessage(reviewResult)
         status = 'completed'
       } else {
         summary = buildReadableFailureMessage(reviewResult, summary)
         status = 'failed'
         failureReason = stats.failureReason === '-' ? failureReason : stats.failureReason
+        detailLog = stats.failureDetail === '-' ? detailLog : stats.failureDetail
       }
     }
 
@@ -389,6 +427,7 @@ export function buildReadableStageTimeline(
       status,
       summary,
       failureReason,
+      detailLog,
       events: stageEvents,
     }
   })
@@ -410,7 +449,9 @@ export function extractResultStats(reviewResult: Record<string, unknown>): Resul
     retryCount: toNumber(summary.retry_count),
     failedStage: toText(summary.failed_stage, '-'),
     failureReason: toText(summary.failure_reason, '-'),
+    failureDetail: toText(summary.failure_detail, '-'),
     retryExhausted: Boolean(summary.retry_exhausted),
+    noFixNeeded: Boolean(summary.no_fix_needed),
     userMessage: toText(summary.user_message, '-'),
   }
 }
@@ -512,9 +553,23 @@ function buildReadableEventLine(event: ReviewEvent): string {
 }
 
 function extractFailureReason(payload: Record<string, unknown>): string | null {
-  const candidates = [payload.reason, payload.failure_reason, payload.stderr_summary, payload.error]
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim() : ''
+  const candidates = [payload.stderr_summary, payload.failure_detail, payload.failure_reason, payload.reason, payload.error]
   for (const candidate of candidates) {
     if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      if (candidate === reason && ['compile_failed', 'patch_apply_failed', 'verifier_failed'].includes(reason)) {
+        continue
+      }
+      return candidate.trim()
+    }
+  }
+  return null
+}
+
+function extractFailureDetail(payload: Record<string, unknown>): string | null {
+  const candidates = [payload.failure_detail, payload.stderr_summary, payload.stdout_summary]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
       return candidate.trim()
     }
   }

@@ -83,12 +83,22 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
     monkeypatch.setattr(
         "core.state_graph.run_semgrep",
         lambda code, language="java": {
-            "issues": [],
+            "issues": [
+                {
+                    "type": "resource_leak",
+                    "severity": "MEDIUM",
+                    "message": "resource should be closed",
+                    "line": 2,
+                    "column": 1,
+                    "ruleId": "forced.state_graph.issue",
+                    "source": "semgrep",
+                }
+            ],
             "summary": {
-                "issuesCount": 0,
+                "issuesCount": 1,
                 "ruleset": "auto",
                 "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
             },
             "diagnostics": [],
         },
@@ -103,7 +113,7 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
     events = _run_graph(request)
     event_types = [event["eventType"] for event in events]
 
-    assert event_types == [
+    assert event_types[0:8] == [
         "analysis_started",
         "ast_parsing_started",
         "ast_parsing_completed",
@@ -112,17 +122,19 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
         "semgrep_scan_started",
         "semgrep_scan_completed",
         "analyzer_completed",
+    ]
+    assert event_types[8:12] == [
         "planner_started",
         "issue_graph_built",
         "repair_plan_created",
         "planner_completed",
-        "case_memory_search_started",
-        "case_memory_completed",
-        "fixer_started",
-        "patch_generated",
-        "fixer_completed",
-        "review_completed",
     ]
+    assert "case_memory_search_started" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
+    assert "patch_generated" in event_types
+    assert "fixer_completed" in event_types
+    assert event_types[-1] == "review_completed"
 
     completed_payload = events[-1]["payload"]
     assert "result" in completed_payload
@@ -181,12 +193,22 @@ def test_state_graph_uses_semgrep_warning_event(monkeypatch) -> None:
     monkeypatch.setattr(
         "core.state_graph.run_semgrep",
         lambda code, language="java": {
-            "issues": [],
+            "issues": [
+                {
+                    "type": "sql_injection",
+                    "severity": "HIGH",
+                    "message": "forced issue with warning fallback",
+                    "line": 1,
+                    "column": 1,
+                    "ruleId": "forced.warning.issue",
+                    "source": "semgrep",
+                }
+            ],
             "summary": {
-                "issuesCount": 0,
+                "issuesCount": 1,
                 "ruleset": "auto",
                 "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 1, "CRITICAL": 0},
             },
             "diagnostics": [
                 {

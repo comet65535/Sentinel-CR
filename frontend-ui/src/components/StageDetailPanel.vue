@@ -51,6 +51,10 @@ function stringify(value: unknown): string {
         <p class="description">{{ stage.description }}</p>
         <p class="summary">{{ stage.summary }}</p>
         <p v-if="stage.failureReason" class="failure">失败原因：{{ stage.failureReason }}</p>
+        <details v-if="stage.detailLog" class="trace">
+          <summary>查看详细日志</summary>
+          <pre>{{ stage.detailLog }}</pre>
+        </details>
 
         <template v-if="debugMode && stage.events.length > 0">
           <div class="debug-block" v-for="event in stage.events" :key="event.sequence">
@@ -161,6 +165,24 @@ function stringify(value: unknown): string {
 
 .failure {
   color: #a24444;
+}
+
+.trace summary {
+  color: #3f5f74;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.trace pre {
+  margin: 0.35rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid #d9e2f0;
+  background: #f5f9fd;
+  border-radius: 8px;
+  padding: 0.45rem;
+  color: #2f4f63;
+  font-size: 0.76rem;
 }
 
 .state-running {

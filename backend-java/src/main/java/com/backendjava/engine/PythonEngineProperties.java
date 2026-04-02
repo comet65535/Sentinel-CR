@@ -7,7 +7,7 @@ public class PythonEngineProperties {
     private String mode = "mock";
     private String pythonBaseUrl = "http://localhost:8000";
     private int pythonConnectTimeoutMs = 3000;
-    private int pythonReadTimeoutMs = 15000;
+    private int pythonReadTimeoutMs = 0;
 
     public String getMode() {
         return mode;

@@ -16,8 +16,10 @@ public class PythonAiEngineAdapter implements AiEngineAdapter {
 
     public PythonAiEngineAdapter(PythonEngineProperties properties, EngineEventMapper eventMapper) {
         HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, properties.getPythonConnectTimeoutMs())
-                .responseTimeout(Duration.ofMillis(properties.getPythonReadTimeoutMs()));
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, properties.getPythonConnectTimeoutMs());
+        if (properties.getPythonReadTimeoutMs() > 0) {
+            httpClient = httpClient.responseTimeout(Duration.ofMillis(properties.getPythonReadTimeoutMs()));
+        }
 
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getPythonBaseUrl())

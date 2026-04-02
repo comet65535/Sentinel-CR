@@ -68,3 +68,4 @@ class EngineState(BaseModel):
     final_status: str = "running"
     events: list[dict[str, Any]] = Field(default_factory=list)
     retry_count: int = 0
+    no_fix_needed: bool = False

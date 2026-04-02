@@ -57,6 +57,7 @@ def bootstrap_state(request: InternalReviewRunRequest) -> EngineState:
         final_status="running",
         events=[],
         retry_count=0,
+        no_fix_needed=False,
     )
 
 
@@ -119,8 +120,9 @@ async def run_day3_state_graph(request: InternalReviewRunRequest) -> AsyncIterat
         async for event in _run_analyzer_and_planner(state):
             yield event
 
-        async for event in _run_memory_and_fixer_verifier_loop(state):
-            yield event
+        if not state.no_fix_needed:
+            async for event in _run_memory_and_fixer_verifier_loop(state):
+                yield event
 
         state.final_status = "completed"
         review_payload = build_review_completed_payload(state)
@@ -324,6 +326,10 @@ async def _run_analyzer_and_planner(state: EngineState) -> AsyncIterator[PythonE
         ),
     )
     yield analyzer_completed
+
+    if len(state.issues) == 0:
+        state.no_fix_needed = True
+        return
 
     planner_started = _record_event(
         state,
