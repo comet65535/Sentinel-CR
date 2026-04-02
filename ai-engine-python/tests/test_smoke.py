@@ -43,14 +43,16 @@ def test_internal_review_run_returns_day3_ndjson_stream() -> None:
         "semgrep_scan_started",
     ]
     assert event_types[6] in {"semgrep_scan_completed", "semgrep_scan_warning"}
-    assert event_types[-6:] == [
-        "analyzer_completed",
-        "planner_started",
-        "issue_graph_built",
-        "repair_plan_created",
-        "planner_completed",
-        "review_completed",
-    ]
+    assert "analyzer_completed" in event_types
+    assert "planner_started" in event_types
+    assert "issue_graph_built" in event_types
+    assert "repair_plan_created" in event_types
+    assert "planner_completed" in event_types
+    assert "case_memory_search_started" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
+    assert any(item in event_types for item in {"patch_generated", "fixer_failed"})
+    assert event_types[-1] == "review_completed"
 
     final_event = events[-1]
     assert final_event["status"] == "COMPLETED"
@@ -61,6 +63,9 @@ def test_internal_review_run_returns_day3_ndjson_stream() -> None:
     assert "repair_plan" in final_event["payload"]
     assert "issue_graph" in final_event["payload"]["result"]
     assert "repair_plan" in final_event["payload"]["result"]
+    assert "memory" in final_event["payload"]["result"]
+    assert "patch" in final_event["payload"]["result"]
+    assert "attempts" in final_event["payload"]["result"]
 
 
 def test_internal_review_run_broken_java_reports_syntax_issue() -> None:

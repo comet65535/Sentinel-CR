@@ -116,6 +116,11 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
         "issue_graph_built",
         "repair_plan_created",
         "planner_completed",
+        "case_memory_search_started",
+        "case_memory_completed",
+        "fixer_started",
+        "patch_generated",
+        "fixer_completed",
         "review_completed",
     ]
 
@@ -132,6 +137,12 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
     assert "repair_plan" in completed_payload
     assert "issue_graph" in completed_payload["result"]
     assert "repair_plan" in completed_payload["result"]
+    assert "memory" in completed_payload
+    assert "patch" in completed_payload
+    assert "attempts" in completed_payload
+    assert completed_payload["summary"]["final_outcome"] in {"patch_generated", "failed_no_patch"}
+    assert completed_payload["patch"]["status"] in {"generated", "absent"}
+    assert all(item["status"] in {"generated", "failed"} for item in completed_payload["attempts"])
 
     assert "classes" not in completed_payload
 
@@ -197,6 +208,9 @@ def test_state_graph_uses_semgrep_warning_event(monkeypatch) -> None:
     assert "issue_graph_built" in event_types
     assert "repair_plan_created" in event_types
     assert "planner_completed" in event_types
+    assert "case_memory_search_started" in event_types
+    assert "fixer_started" in event_types
+    assert "review_completed" in event_types
 
 
 def test_state_graph_fails_on_empty_input() -> None:

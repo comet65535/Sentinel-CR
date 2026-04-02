@@ -42,6 +42,10 @@ public class Demo {
     assert "issue_graph_built" in event_types
     assert "repair_plan_created" in event_types
     assert "planner_completed" in event_types
+    assert "case_memory_search_started" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
+    assert any(item in event_types for item in {"patch_generated", "fixer_failed"})
     assert event_types[-1] == "review_completed"
 
 
@@ -132,6 +136,9 @@ public class CleanService {
     assert "issue_graph_built" in event_types
     assert "repair_plan_created" in event_types
     assert "planner_completed" in event_types
+    assert "case_memory_search_started" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
 
     payload = events[-1]["payload"]
     issue_graph = payload["result"]["issue_graph"]
@@ -163,14 +170,18 @@ public class Demo {
         "semgrep_scan_started",
     ]
     assert event_types[6] in {"semgrep_scan_completed", "semgrep_scan_warning"}
-    assert event_types[7:] == [
+    assert event_types[7:12] == [
         "analyzer_completed",
         "planner_started",
         "issue_graph_built",
         "repair_plan_created",
         "planner_completed",
-        "review_completed",
     ]
+    assert "case_memory_search_started" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
+    assert any(item in event_types for item in {"patch_generated", "fixer_failed"})
+    assert event_types[-1] == "review_completed"
 
     payload = events[-1]["payload"]
     issues = payload["result"]["issues"]

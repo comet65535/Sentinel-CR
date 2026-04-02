@@ -9,7 +9,7 @@ from core.events import to_ndjson_line
 from core.schemas import InternalReviewRunRequest
 from core.state_graph import run_day3_state_graph
 
-app = FastAPI(title="Sentinel-CR AI Engine Python", version="0.3.0-day3")
+app = FastAPI(title="Sentinel-CR AI Engine Python", version="0.4.0-day4")
 
 
 @app.get("/health")

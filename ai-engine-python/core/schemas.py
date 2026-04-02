@@ -12,6 +12,7 @@ class InternalReviewRunRequest(BaseModel):
     code_text: str = Field(alias="codeText")
     language: str
     source_type: str = Field(alias="sourceType")
+    options: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -56,6 +57,9 @@ class EngineState(BaseModel):
     issue_graph: dict[str, Any] = Field(default_factory=default_issue_graph)
     repair_plan: list[dict[str, Any]] = Field(default_factory=list)
     planner_summary: dict[str, int] = Field(default_factory=default_planner_summary)
+    memory_matches: list[dict[str, Any]] = Field(default_factory=list)
+    patch_artifact: dict[str, Any] | None = None
+    attempts: list[dict[str, Any]] = Field(default_factory=list)
     patch: dict[str, Any] | None = None
     verification_result: dict[str, Any] | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)

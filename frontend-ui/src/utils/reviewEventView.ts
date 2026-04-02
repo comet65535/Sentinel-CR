@@ -15,6 +15,13 @@ const EVENT_TYPE_TITLE_MAP: Record<string, string> = {
   issue_graph_built: '问题图构建完成',
   repair_plan_created: '修复计划已生成',
   planner_completed: '规划器处理完成',
+  case_memory_search_started: '案例检索开始',
+  case_memory_matched: '命中历史案例',
+  case_memory_completed: '案例检索完成',
+  fixer_started: '开始生成补丁',
+  patch_generated: '补丁生成完成',
+  fixer_completed: '修复阶段完成',
+  fixer_failed: '修复阶段失败',
   review_completed: '分析完成',
   review_failed: '分析失败',
   heartbeat: '连接保活',
@@ -32,6 +39,13 @@ export const AGGREGATED_EVENT_TYPES = new Set<string>([
   'issue_graph_built',
   'repair_plan_created',
   'planner_completed',
+  'case_memory_search_started',
+  'case_memory_matched',
+  'case_memory_completed',
+  'fixer_started',
+  'patch_generated',
+  'fixer_completed',
+  'fixer_failed',
   'review_completed',
   'review_failed',
   'heartbeat',
@@ -52,6 +66,13 @@ export const SSE_EVENT_TYPES = [
   'issue_graph_built',
   'repair_plan_created',
   'planner_completed',
+  'case_memory_search_started',
+  'case_memory_matched',
+  'case_memory_completed',
+  'fixer_started',
+  'patch_generated',
+  'fixer_completed',
+  'fixer_failed',
   'review_completed',
   'review_failed',
   'heartbeat',
@@ -117,8 +138,27 @@ export function buildEventSummary(event: ReviewEvent): string {
       return `修复计划已生成（${toCount(payload.planCount)} 个计划项）`
     case 'planner_completed':
       return `规划器处理完成（问题 ${toCount(payload.issueCount)}，计划 ${toCount(payload.planCount)}）`
+    case 'case_memory_search_started':
+      return `开始检索案例库（问题 ${toCount(payload.issue_count)}）`
+    case 'case_memory_matched':
+      return `命中案例 ${toCount(payload.match_count)} 条`
+    case 'case_memory_completed':
+      return `案例检索完成（命中 ${toCount(payload.match_count)}）`
+    case 'fixer_started':
+      return `开始生成补丁（计划 ${toCount(payload.plan_count)}，案例 ${toCount(payload.memory_match_count)}）`
+    case 'patch_generated':
+      return 'Unified Diff 补丁生成完成'
+    case 'fixer_completed':
+      return 'Fixer 阶段完成'
+    case 'fixer_failed':
+      return `Fixer 失败：${typeof payload.reason === 'string' ? payload.reason : '无有效补丁'}`
     case 'review_completed': {
       const result = (payload.result ?? payload) as Record<string, unknown>
+      const summary = (result.summary ?? payload.summary ?? {}) as Record<string, unknown>
+      const finalOutcome = typeof summary.final_outcome === 'string' ? summary.final_outcome : ''
+      if (finalOutcome) {
+        return `任务完成：${finalOutcome}（attempt=${toCount(summary.attempt_count)}）`
+      }
       const syntaxCount = countSyntaxIssues(result.issues)
       if (syntaxCount > 0) {
         return `分析完成：${toArrayCount(result.issues)} 个问题，其中 ${syntaxCount} 个为语法错误`

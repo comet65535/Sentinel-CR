@@ -106,7 +106,8 @@ public class CleanService {
 }
 """.strip()
     )
-    assert [event["eventType"] for event in events] == [
+    event_types = [event["eventType"] for event in events]
+    assert event_types[:8] == [
         "analysis_started",
         "ast_parsing_started",
         "ast_parsing_completed",
@@ -115,10 +116,16 @@ public class CleanService {
         "semgrep_scan_started",
         "semgrep_scan_completed",
         "analyzer_completed",
+    ]
+    assert event_types[8:12] == [
         "planner_started",
         "issue_graph_built",
         "repair_plan_created",
         "planner_completed",
-        "review_completed",
     ]
+    assert "case_memory_search_started" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
+    assert any(item in event_types for item in {"patch_generated", "fixer_failed"})
+    assert event_types[-1] == "review_completed"
     assert events[-1]["payload"]["result"]["issues"] == []

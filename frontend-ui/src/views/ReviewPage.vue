@@ -73,6 +73,11 @@ const resultStats = computed(() => {
   const issueGraph = isObject(result.issue_graph) ? (result.issue_graph as Record<string, unknown>) : {}
   const graphNodes = Array.isArray(issueGraph.nodes) ? issueGraph.nodes : []
   const graphEdges = Array.isArray(issueGraph.edges) ? issueGraph.edges : []
+  const memory = isObject(result.memory) ? (result.memory as Record<string, unknown>) : {}
+  const memoryMatches = Array.isArray(memory.matches) ? memory.matches : []
+  const patch = isObject(result.patch) ? (result.patch as Record<string, unknown>) : {}
+  const attempts = Array.isArray(result.attempts) ? result.attempts : []
+  const summary = isObject(result.summary) ? (result.summary as Record<string, unknown>) : {}
 
   return {
     issuesCount: issues.length,
@@ -85,6 +90,10 @@ const resultStats = computed(() => {
     issueGraphNodesCount: graphNodes.length,
     issueGraphEdgesCount: graphEdges.length,
     repairPlanCount: repairPlan.length,
+    memoryMatchCount: memoryMatches.length,
+    patchStatus: typeof patch.status === 'string' ? patch.status : '-',
+    attemptCount: attempts.length,
+    finalOutcome: typeof summary.final_outcome === 'string' ? summary.final_outcome : '-',
   }
 })
 
@@ -256,6 +265,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
         <p><strong>问题图节点：</strong>{{ resultStats.issueGraphNodesCount }}</p>
         <p><strong>问题图边：</strong>{{ resultStats.issueGraphEdgesCount }}</p>
         <p><strong>修复计划项：</strong>{{ resultStats.repairPlanCount }}</p>
+        <p><strong>案例命中数：</strong>{{ resultStats.memoryMatchCount }}</p>
+        <p><strong>补丁状态：</strong>{{ resultStats.patchStatus }}</p>
+        <p><strong>尝试次数：</strong>{{ resultStats.attemptCount }}</p>
+        <p><strong>最终结果：</strong>{{ resultStats.finalOutcome }}</p>
         <p><strong>Semgrep 状态：</strong>{{ semgrepStatus }}</p>
         <p><strong>当前任务状态：</strong>{{ toStatusText(taskStatus) }}</p>
       </div>

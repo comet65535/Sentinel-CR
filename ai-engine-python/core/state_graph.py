@@ -1,9 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 
-from agents import run_planner_agent
+from agents import build_review_completed_payload, run_fixer_agent, run_planner_agent
 from analyzers import (
     build_symbol_graph,
     compose_day2_output,
@@ -11,6 +10,7 @@ from analyzers import (
     run_semgrep,
     validate_day2_input,
 )
+from memory import retrieve_case_matches
 
 from .events import build_event
 from .schemas import (
@@ -41,26 +41,14 @@ def bootstrap_state(request: InternalReviewRunRequest) -> EngineState:
         issue_graph=default_issue_graph(),
         repair_plan=[],
         planner_summary=default_planner_summary(),
+        memory_matches=[],
+        patch_artifact=None,
+        attempts=[],
         patch=None,
         verification_result=None,
         events=[],
         retry_count=0,
     )
-
-
-def finalize_result(state: EngineState) -> dict[str, Any]:
-    return {
-        "summary": "day3 planner completed",
-        "engine": "python",
-        "analyzer": state.analyzer_summary,
-        "issues": state.issues,
-        "symbols": state.symbols,
-        "contextSummary": state.context_summary,
-        "diagnostics": state.diagnostics,
-        "issue_graph": state.issue_graph,
-        "repair_plan": state.repair_plan,
-        "planner_summary": state.planner_summary,
-    }
 
 
 def _record_event(state: EngineState, event: PythonEngineEvent) -> PythonEngineEvent:
@@ -358,21 +346,153 @@ async def run_day3_state_graph(request: InternalReviewRunRequest) -> AsyncIterat
         )
         yield planner_completed
 
-        result = finalize_result(state)
-        review_payload = {
-            "source": "python-engine",
-            "stage": "finalize_result",
-            "result": result,
-            "summary": result["summary"],
-            "engine": result["engine"],
-            "analyzer": result["analyzer"],
-            "issues": result["issues"],
-            "symbols": result["symbols"],
-            "contextSummary": result["contextSummary"],
-            "diagnostics": result["diagnostics"],
-            "issue_graph": result["issue_graph"],
-            "repair_plan": result["repair_plan"],
-        }
+        # Day4 strict event order starts here.
+        case_memory_search_started = _record_event(
+            state,
+            build_event(
+                task_id=state.task_id,
+                event_type="case_memory_search_started",
+                message="case memory search started",
+                status="RUNNING",
+                payload={
+                    "source": "python-engine",
+                    "stage": "memory",
+                    "attempt_no": 1,
+                    "issue_count": len(state.issues),
+                    "strategy_hints": [str(item.get("strategy") or "") for item in state.repair_plan],
+                },
+            ),
+        )
+        yield case_memory_search_started
+
+        state.memory_matches = retrieve_case_matches(
+            issues=state.issues,
+            repair_plan=state.repair_plan,
+            symbols=state.symbols,
+            context_summary=state.context_summary,
+            top_k=3,
+        )
+
+        if state.memory_matches:
+            case_memory_matched = _record_event(
+                state,
+                build_event(
+                    task_id=state.task_id,
+                    event_type="case_memory_matched",
+                    message="case memory matched",
+                    status="RUNNING",
+                    payload={
+                        "source": "python-engine",
+                        "stage": "memory",
+                        "attempt_no": 1,
+                        "match_count": len(state.memory_matches),
+                        "matches": state.memory_matches,
+                    },
+                ),
+            )
+            yield case_memory_matched
+
+        case_memory_completed = _record_event(
+            state,
+            build_event(
+                task_id=state.task_id,
+                event_type="case_memory_completed",
+                message="case memory completed",
+                status="RUNNING",
+                payload={
+                    "source": "python-engine",
+                    "stage": "memory",
+                    "attempt_no": 1,
+                    "match_count": len(state.memory_matches),
+                },
+            ),
+        )
+        yield case_memory_completed
+
+        fixer_started = _record_event(
+            state,
+            build_event(
+                task_id=state.task_id,
+                event_type="fixer_started",
+                message="fixer started",
+                status="RUNNING",
+                payload={
+                    "source": "python-engine",
+                    "stage": "fixer",
+                    "attempt_no": 1,
+                    "plan_count": len(state.repair_plan),
+                    "memory_match_count": len(state.memory_matches),
+                },
+            ),
+        )
+        yield fixer_started
+
+        fixer_output = run_fixer_agent(
+            repair_plan=state.repair_plan,
+            issues=state.issues,
+            symbols=state.symbols,
+            context_summary=state.context_summary,
+            memory_matches=state.memory_matches,
+            attempt_no=1,
+        )
+        state.patch_artifact = fixer_output["patch_artifact"]
+        state.patch = state.patch_artifact
+        state.attempts.append(fixer_output["attempt"])
+
+        if fixer_output["ok"]:
+            patch_generated = _record_event(
+                state,
+                build_event(
+                    task_id=state.task_id,
+                    event_type="patch_generated",
+                    message="patch generated",
+                    status="RUNNING",
+                    payload={
+                        "source": "python-engine",
+                        "stage": "fixer",
+                        "attempt_no": 1,
+                        "patch": state.patch_artifact,
+                    },
+                ),
+            )
+            yield patch_generated
+
+            fixer_completed = _record_event(
+                state,
+                build_event(
+                    task_id=state.task_id,
+                    event_type="fixer_completed",
+                    message="fixer completed",
+                    status="RUNNING",
+                    payload={
+                        "source": "python-engine",
+                        "stage": "fixer",
+                        "attempt_no": 1,
+                        "patch_id": state.patch_artifact.get("patch_id"),
+                    },
+                ),
+            )
+            yield fixer_completed
+        else:
+            fixer_failed = _record_event(
+                state,
+                build_event(
+                    task_id=state.task_id,
+                    event_type="fixer_failed",
+                    message="fixer failed",
+                    status="RUNNING",
+                    payload={
+                        "source": "python-engine",
+                        "stage": "fixer",
+                        "attempt_no": 1,
+                        "reason": state.attempts[-1].get("failure_reason"),
+                        "failure_detail": state.attempts[-1].get("failure_detail"),
+                    },
+                ),
+            )
+            yield fixer_failed
+
+        review_payload = build_review_completed_payload(state)
         review_completed = _record_event(
             state,
             build_event(
@@ -394,7 +514,7 @@ async def run_day3_state_graph(request: InternalReviewRunRequest) -> AsyncIterat
                 status="FAILED",
                 payload={
                     "source": "python-engine",
-                    "stage": "analyzer_pipeline",
+                    "stage": "state_graph",
                     "errorType": exc.__class__.__name__,
                     "error": str(exc),
                     "diagnostics": state.diagnostics,
