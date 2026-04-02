@@ -5,7 +5,6 @@ import com.backendjava.engine.EngineEventMapper;
 import com.backendjava.engine.MockAiEngineAdapter;
 import com.backendjava.engine.PythonAiEngineAdapter;
 import com.backendjava.engine.PythonEngineProperties;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -23,7 +22,7 @@ public class AiEngineConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(AiEngineAdapter.class)
+    @ConditionalOnProperty(prefix = "sentinel.ai", name = "mode", havingValue = "mock")
     public AiEngineAdapter mockAiEngineAdapter() {
         return new MockAiEngineAdapter();
     }
