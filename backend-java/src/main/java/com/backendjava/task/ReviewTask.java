@@ -1,6 +1,8 @@
 package com.backendjava.task;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -41,7 +43,7 @@ public class ReviewTask {
     public synchronized void markCompleted(Map<String, Object> result) {
         this.status = ReviewTaskStatus.COMPLETED;
         this.updatedAt = Instant.now();
-        this.result = result == null ? Map.of() : Map.copyOf(result);
+        this.result = result == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(result));
         this.errorMessage = null;
     }
 

@@ -38,8 +38,10 @@ public class UserService {
     event_types = [event["eventType"] for event in events]
 
     assert event_types.count("review_completed") == 1
+    assert "review_failed" not in event_types
     assert "patch_generated" in event_types
     assert "fixer_failed" not in event_types
+    assert "fixer_completed" in event_types
 
     idx_search = event_types.index("case_memory_search_started")
     idx_completed = event_types.index("case_memory_completed")
@@ -116,6 +118,7 @@ public class Demo {
     assert "fixer_failed" in event_types
     assert "patch_generated" not in event_types
     assert "fixer_completed" not in event_types
+    assert "review_failed" not in event_types
 
     idx_search = event_types.index("case_memory_search_started")
     idx_completed = event_types.index("case_memory_completed")
