@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 const props = defineProps<{
   code: string
   submitting: boolean
@@ -89,3 +89,4 @@ function onSubmit() {
   cursor: not-allowed;
 }
 </style>
+

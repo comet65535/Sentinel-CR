@@ -1,21 +1,25 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { createReviewEventSource, createReviewTask, fetchReviewTask } from '../api/review'
-import EventTimeline from '../components/EventTimeline.vue'
+import ProgressHeader from '../components/ProgressHeader.vue'
+import ResultSummaryCard from '../components/ResultSummaryCard.vue'
 import ReviewForm from '../components/ReviewForm.vue'
+import ReviewSidebar from '../components/ReviewSidebar.vue'
+import StageDetailPanel from '../components/StageDetailPanel.vue'
 import type { ReviewEvent, ReviewTaskStatus } from '../types/review'
 import {
-  AGGREGATED_EVENT_TYPES,
   SSE_EVENT_TYPES,
   buildEventSummary,
-  countSyntaxIssues,
+  buildStageProgress,
+  eventsForStage,
   getEventTitle,
   summarizePayload,
   toStatusText,
+  type StageKey,
 } from '../utils/reviewEventView'
 
-const DEFAULT_SNIPPET = `public class Demo {
-    public String greet(String name) {
+const DEFAULT_SNIPPET = `class snippet {
+    String greet(String name) {
         if (name == null) {
             return "hello";
         }
@@ -30,16 +34,34 @@ const events = ref<ReviewEvent[]>([])
 const submitting = ref(false)
 const errorMessage = ref('')
 const debugMode = ref(false)
+const detailPanelOpen = ref(false)
+const selectedStageKey = ref<StageKey | null>(null)
 
 let eventSource: EventSource | null = null
 
 const sortedEvents = computed(() => [...events.value].sort((left, right) => left.sequence - right.sequence))
 
-const displayEvents = computed(() =>
-  debugMode.value
-    ? sortedEvents.value
-    : sortedEvents.value.filter((event) => AGGREGATED_EVENT_TYPES.has(event.eventType))
+const stageItems = computed(() => buildStageProgress(sortedEvents.value, taskStatus.value))
+
+const currentStage = computed(() => {
+  return (
+    stageItems.value.find((item) => item.status === 'active') ||
+    stageItems.value.find((item) => item.status === 'failed') ||
+    [...stageItems.value].reverse().find((item) => item.status === 'completed') ||
+    stageItems.value[0] ||
+    null
+  )
+})
+
+const selectedStage = computed(
+  () => stageItems.value.find((item) => item.key === selectedStageKey.value) || currentStage.value
 )
+
+const selectedStageEvents = computed(() => {
+  const stageKey = selectedStage.value?.key
+  if (!stageKey) return []
+  return eventsForStage(stageKey, sortedEvents.value)
+})
 
 const reviewResult = computed<Record<string, unknown> | null>(() => {
   const completed = [...sortedEvents.value]
@@ -52,57 +74,42 @@ const reviewResult = computed<Record<string, unknown> | null>(() => {
   return completed.payload as Record<string, unknown>
 })
 
-const analyzerSummary = computed<Record<string, unknown>>(() => {
-  const result = reviewResult.value
-  const analyzer = result?.analyzer
-  if (typeof analyzer === 'object' && analyzer !== null) {
-    return analyzer as Record<string, unknown>
-  }
-  return {}
-})
-
 const resultStats = computed(() => {
   const result = reviewResult.value ?? {}
-  const analyzer = analyzerSummary.value
-  const symbols = Array.isArray(result.symbols) ? result.symbols : []
-  const issues = Array.isArray(result.issues) ? result.issues : []
-  const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : []
-  const parseErrorsFromIssues = countSyntaxIssues(issues)
-  const parseErrorsFromSummary = toNumber(analyzer.syntaxErrorsCount)
-  const repairPlan = Array.isArray(result.repair_plan) ? result.repair_plan : []
-  const issueGraph = isObject(result.issue_graph) ? (result.issue_graph as Record<string, unknown>) : {}
-  const graphNodes = Array.isArray(issueGraph.nodes) ? issueGraph.nodes : []
-  const graphEdges = Array.isArray(issueGraph.edges) ? issueGraph.edges : []
-  const memory = isObject(result.memory) ? (result.memory as Record<string, unknown>) : {}
-  const memoryMatches = Array.isArray(memory.matches) ? memory.matches : []
-  const patch = isObject(result.patch) ? (result.patch as Record<string, unknown>) : {}
-  const attempts = Array.isArray(result.attempts) ? result.attempts : []
   const summary = isObject(result.summary) ? (result.summary as Record<string, unknown>) : {}
+  const memory = isObject(result.memory) ? (result.memory as Record<string, unknown>) : {}
+  const patch = isObject(result.patch) ? (result.patch as Record<string, unknown>) : {}
 
   return {
-    issuesCount: issues.length,
-    classesCount: toNumber(analyzer.classesCount),
-    methodsCount: toNumber(analyzer.methodsCount),
-    fieldsCount: toNumber(analyzer.fieldsCount),
-    symbolsCount: symbols.length,
-    diagnosticsCount: diagnostics.length,
-    parseErrorsCount: Math.max(parseErrorsFromIssues, parseErrorsFromSummary),
-    issueGraphNodesCount: graphNodes.length,
-    issueGraphEdgesCount: graphEdges.length,
-    repairPlanCount: repairPlan.length,
-    memoryMatchCount: memoryMatches.length,
+    issueCount: toArrayCount(result.issues),
+    repairPlanCount: toArrayCount(result.repair_plan),
+    memoryMatchCount: toArrayCount(memory.matches),
+    attemptCount: toArrayCount(result.attempts),
     patchStatus: typeof patch.status === 'string' ? patch.status : '-',
-    attemptCount: attempts.length,
     finalOutcome: typeof summary.final_outcome === 'string' ? summary.final_outcome : '-',
+    verifiedLevel: typeof summary.verified_level === 'string' ? summary.verified_level : 'L0',
   }
 })
 
-const semgrepStatus = computed(() => {
-  const eventTypes = new Set(sortedEvents.value.map((event) => event.eventType))
-  if (eventTypes.has('semgrep_scan_warning')) return '降级'
-  if (eventTypes.has('semgrep_scan_completed')) return '正常'
-  return '未执行'
-})
+watch(
+  stageItems,
+  (nextItems) => {
+    if (nextItems.length === 0) {
+      selectedStageKey.value = null
+      return
+    }
+
+    if (selectedStageKey.value && nextItems.some((item) => item.key === selectedStageKey.value)) {
+      return
+    }
+
+    selectedStageKey.value =
+      nextItems.find((item) => item.status === 'active')?.key ||
+      nextItems.find((item) => item.status === 'failed')?.key ||
+      nextItems[0].key
+  },
+  { immediate: true }
+)
 
 function isTaskFinished(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED'
@@ -188,6 +195,8 @@ async function submitReview() {
   events.value = []
   taskId.value = ''
   taskStatus.value = 'IDLE'
+  selectedStageKey.value = null
+  detailPanelOpen.value = false
   closeEventSource()
 
   try {
@@ -210,137 +219,197 @@ async function submitReview() {
   }
 }
 
+function openStageDetail(stageKey: string) {
+  selectedStageKey.value = stageKey as StageKey
+  detailPanelOpen.value = true
+}
+
+function openCurrentStageDetail() {
+  if (currentStage.value) {
+    openStageDetail(currentStage.value.key)
+  }
+}
+
+function closeDetailPanel() {
+  detailPanelOpen.value = false
+}
+
+function startNewAnalysis() {
+  closeEventSource()
+  events.value = []
+  taskId.value = ''
+  taskStatus.value = 'IDLE'
+  errorMessage.value = ''
+  detailPanelOpen.value = false
+  selectedStageKey.value = null
+}
+
 onBeforeUnmount(() => {
   closeEventSource()
 })
 
-function toNumber(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : 0
-  }
-  return 0
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function toArrayCount(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
 }
 </script>
 
 <template>
-  <main class="page">
-    <section class="headline">
-      <p class="eyebrow">Sentinel-CR Day 3</p>
-      <h1>Day 3 Issue Graph Planner · Analyzer + Planner</h1>
-      <p class="hint">
-        提交一段 Java 代码，观察 Analyzer 与 Planner 事件流、结构化问题图与修复计划。
-      </p>
+  <main class="page-layout">
+    <ReviewSidebar :task-id="taskId" :task-status="taskStatus" @new-analysis="startNewAnalysis" />
+
+    <section class="workspace">
+      <section class="workspace-header panel">
+        <p class="eyebrow">Sentinel-CR Day4.5 + Day5</p>
+        <h1>Patch 验证工作台</h1>
+        <p class="hint">默认展示当前阶段与结果摘要，完整事件细节在右侧详情面板按需展开。</p>
+        <p class="status-line">
+          <strong>任务状态：</strong>{{ toStatusText(taskStatus) }}
+          <span class="task-id"><strong>任务 ID：</strong>{{ taskId || '-' }}</span>
+        </p>
+      </section>
+
+      <ProgressHeader :stages="stageItems" :selected-key="selectedStageKey" @select-stage="openStageDetail" />
+
+      <section class="panel current-stage-card">
+        <header>
+          <h2>当前阶段</h2>
+          <button type="button" class="detail-btn" @click="openCurrentStageDetail">查看详情</button>
+        </header>
+        <p class="current-title">{{ currentStage?.title ?? '等待任务启动' }}</p>
+        <p class="current-hint">{{ currentStage?.hint ?? '暂无阶段信息' }}</p>
+      </section>
+
+      <ResultSummaryCard :has-result="Boolean(reviewResult)" :stats="resultStats" />
+
+      <section class="panel form-panel">
+        <ReviewForm v-model:code="code" :submitting="submitting" @submit="submitReview" />
+      </section>
+
+      <section class="panel meta-panel">
+        <label class="debug-toggle">
+          <input v-model="debugMode" type="checkbox" />
+          <span>Debug 模式（仅影响右侧详情粒度）</span>
+        </label>
+      </section>
+
+      <section v-if="errorMessage" class="panel error-box">
+        {{ errorMessage }}
+      </section>
     </section>
 
-    <ReviewForm v-model:code="code" :submitting="submitting" @submit="submitReview" />
-
-    <section class="panel meta">
-      <p><strong>任务 ID：</strong> {{ taskId || '-' }}</p>
-      <p><strong>任务状态：</strong> {{ toStatusText(taskStatus) }}</p>
-      <label class="debug-toggle">
-        <input v-model="debugMode" type="checkbox" />
-        <span>Debug 视图（显示全部细粒度事件）</span>
-      </label>
-    </section>
-
-    <section class="panel result-card">
-      <header class="result-header">
-        <h2>Day 3 结果摘要</h2>
-        <p>{{ reviewResult ? '已生成结构化结果' : '等待 review_completed 事件' }}</p>
-      </header>
-      <div class="result-grid">
-        <p><strong>问题数：</strong>{{ resultStats.issuesCount }}</p>
-        <p><strong>类数量：</strong>{{ resultStats.classesCount }}</p>
-        <p><strong>方法数量：</strong>{{ resultStats.methodsCount }}</p>
-        <p><strong>字段数量：</strong>{{ resultStats.fieldsCount }}</p>
-        <p><strong>符号数量：</strong>{{ resultStats.symbolsCount }}</p>
-        <p><strong>诊断数量：</strong>{{ resultStats.diagnosticsCount }}</p>
-        <p><strong>解析错误数：</strong>{{ resultStats.parseErrorsCount }}</p>
-        <p><strong>问题图节点：</strong>{{ resultStats.issueGraphNodesCount }}</p>
-        <p><strong>问题图边：</strong>{{ resultStats.issueGraphEdgesCount }}</p>
-        <p><strong>修复计划项：</strong>{{ resultStats.repairPlanCount }}</p>
-        <p><strong>案例命中数：</strong>{{ resultStats.memoryMatchCount }}</p>
-        <p><strong>补丁状态：</strong>{{ resultStats.patchStatus }}</p>
-        <p><strong>尝试次数：</strong>{{ resultStats.attemptCount }}</p>
-        <p><strong>最终结果：</strong>{{ resultStats.finalOutcome }}</p>
-        <p><strong>Semgrep 状态：</strong>{{ semgrepStatus }}</p>
-        <p><strong>当前任务状态：</strong>{{ toStatusText(taskStatus) }}</p>
-      </div>
-      <p v-if="resultStats.parseErrorsCount > 0" class="parse-warning">
-        检测到语法/解析错误，请先修复语法问题再进行后续修复规划。
-      </p>
-    </section>
-
-    <section v-if="errorMessage" class="panel error-box">
-      {{ errorMessage }}
-    </section>
-
-    <EventTimeline
-      :events="displayEvents"
+    <StageDetailPanel
+      :open="detailPanelOpen"
+      :selected-stage="selectedStage"
+      :stage-events="selectedStageEvents"
       :debug-mode="debugMode"
       :get-title="getEventTitle"
       :get-summary="buildEventSummary"
       :summarize-payload="summarizePayload"
+      @close="closeDetailPanel"
     />
-    <p class="mode-note">
-      {{
-        debugMode
-          ? 'Debug 模式：展示全部细粒度事件（含 *_started）。'
-          : '默认模式：仅展示聚合阶段事件。'
-      }}
-    </p>
   </main>
 </template>
 
 <style scoped>
-.page {
-  width: min(920px, 100%);
-  margin: 0 auto;
+.page-layout {
   display: grid;
+  grid-template-columns: 250px minmax(0, 1fr) auto;
   gap: 1rem;
+  align-items: start;
 }
 
-.headline h1 {
+.workspace {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #d7e1eb;
+  border-radius: 14px;
+  padding: 0.9rem;
+}
+
+.workspace-header h1 {
   margin: 0.1rem 0;
-  font-size: clamp(1.35rem, 4vw, 1.9rem);
+  font-size: clamp(1.3rem, 3vw, 1.85rem);
   color: #153243;
 }
 
 .eyebrow {
   margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: #176891;
-  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+  text-transform: uppercase;
   font-weight: 700;
 }
 
 .hint {
   margin: 0;
-  color: #4d6778;
+  color: #4e687c;
 }
 
-.panel {
-  background: #ffffff;
-  border: 1px solid #d5dce4;
-  border-radius: 14px;
-  padding: 1rem;
+.status-line {
+  margin: 0.35rem 0 0;
+  color: #214557;
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
 }
 
-.meta {
+.current-stage-card {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.45rem;
 }
 
-.meta p {
+.current-stage-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.current-stage-card h2 {
   margin: 0;
-  color: #214455;
+  color: #17384b;
+  font-size: 1rem;
+}
+
+.current-title {
+  margin: 0;
+  color: #1d4860;
+  font-weight: 700;
+}
+
+.current-hint {
+  margin: 0;
+  color: #546f82;
+}
+
+.detail-btn {
+  border: 1px solid #c9d7e5;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #1f4a61;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.form-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.meta-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .debug-toggle {
@@ -351,57 +420,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
   font-size: 0.92rem;
 }
 
-.result-card {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.result-header h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  color: #173647;
-}
-
-.result-header p {
-  margin: 0.25rem 0 0;
-  color: #567488;
-}
-
-.result-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.4rem 1rem;
-}
-
-.result-grid p {
-  margin: 0;
-  color: #214455;
-}
-
-.parse-warning {
-  margin: 0.2rem 0 0;
-  color: #a3471e;
-  background: #fff4ea;
-  border: 1px solid #efc4a9;
-  border-radius: 8px;
-  padding: 0.45rem 0.55rem;
-}
-
 .error-box {
   border-color: #d78989;
   background: #fff3f3;
   color: #9f3333;
 }
 
-.mode-note {
-  margin: -0.25rem 0 0;
-  color: #597286;
-  font-size: 0.88rem;
-}
-
-@media (max-width: 720px) {
-  .result-grid {
+@media (max-width: 1100px) {
+  .page-layout {
     grid-template-columns: 1fr;
   }
 }
 </style>
+

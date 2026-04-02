@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from memory import resolve_default_target_file
@@ -8,12 +9,14 @@ from prompts import build_fixer_prompt_payload
 
 def run_fixer_agent(
     *,
+    code_text: str,
     repair_plan: list[dict[str, Any]],
     issues: list[dict[str, Any]],
     symbols: list[dict[str, Any]],
     context_summary: dict[str, Any],
     memory_matches: list[dict[str, Any]],
     attempt_no: int,
+    last_failure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     patch_id = f"patch_attempt_{attempt_no}"
     # Keep the structured prompt payload for future LLM-based fallback.
@@ -31,10 +34,12 @@ def run_fixer_agent(
     memory_case_ids = [str(item.get("case_id")) for item in memory_matches if item.get("case_id")]
 
     unified_diff = _build_patch_content(
+        code_text=code_text,
         repair_plan=repair_plan,
         memory_matches=memory_matches,
         target_file=target_file,
         strategy_used=strategy_used,
+        last_failure=last_failure,
     )
     if not _is_valid_unified_diff(unified_diff):
         attempt = _build_attempt_record(
@@ -83,6 +88,9 @@ def run_fixer_agent(
 def _resolve_target_file(issues: list[dict[str, Any]]) -> str:
     target = resolve_default_target_file(issues)
     target = target.replace("\\", "/").strip()
+    marker_match = re.match(r"^(?P<path>.+\.java):\d+(?::\d+)?$", target)
+    if marker_match:
+        target = marker_match.group("path")
     if target.startswith("a/") or target.startswith("b/"):
         target = target[2:]
     return target or "snippet.java"
@@ -102,29 +110,39 @@ def _resolve_strategy(repair_plan: list[dict[str, Any]], memory_matches: list[di
 
 def _build_patch_content(
     *,
+    code_text: str,
     repair_plan: list[dict[str, Any]],
     memory_matches: list[dict[str, Any]],
     target_file: str,
     strategy_used: str,
+    last_failure: dict[str, Any] | None,
 ) -> str:
     if memory_matches:
         candidate = str(memory_matches[0].get("diff") or "").strip()
         adapted = _adapt_diff_path(candidate, target_file)
-        if _is_valid_unified_diff(adapted):
+        if adapted and _is_candidate_compatible(adapted, code_text):
             return adapted
+        if _is_valid_unified_diff(adapted):
+            # Candidate has valid format but not guaranteed to fit current snippet.
+            # Fall through to deterministic patch for stable apply behavior.
+            pass
 
+    first_line = _first_code_line(code_text)
     lines = [
         f"diff --git a/{target_file} b/{target_file}",
         f"--- a/{target_file}",
         f"+++ b/{target_file}",
         "@@ -1,1 +1,2 @@",
-        "-// TODO: apply repair",
-        f"+// Applied Day4 repair strategy: {strategy_used}",
-        "+// Replace this placeholder with project-specific implementation.",
+        f" {first_line}",
+        f"+// Applied repair strategy: {strategy_used}",
     ]
 
     if repair_plan and strategy_used == "manual_review":
-        lines[-2] = f"+// Planned strategy: {repair_plan[0].get('strategy', 'manual_review')}"
+        lines[-1] = f"+// Planned strategy: {repair_plan[0].get('strategy', 'manual_review')}"
+    if last_failure:
+        failed_stage = str(last_failure.get("failed_stage") or "").strip()
+        if failed_stage:
+            lines[-1] = f"+// Retry after {failed_stage} failure: strategy={strategy_used}"
     return "\n".join(lines)
 
 
@@ -148,6 +166,26 @@ def _adapt_diff_path(diff_text: str, target_file: str) -> str:
             continue
         normalized.append(line)
     return "\n".join(normalized)
+
+
+def _is_candidate_compatible(diff_text: str, code_text: str) -> bool:
+    if not code_text:
+        return False
+    source = code_text.splitlines()
+    source_set = set(source)
+    for line in diff_text.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            removed = line[1:]
+            if removed not in source_set:
+                return False
+    return True
+
+
+def _first_code_line(code_text: str) -> str:
+    for line in code_text.splitlines():
+        if line.strip():
+            return line
+    return "// empty snippet"
 
 
 def _is_valid_unified_diff(content: str) -> bool:

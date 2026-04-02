@@ -62,5 +62,9 @@ class EngineState(BaseModel):
     attempts: list[dict[str, Any]] = Field(default_factory=list)
     patch: dict[str, Any] | None = None
     verification_result: dict[str, Any] | None = None
+    enable_verifier: bool = False
+    enable_security_rescan: bool = False
+    max_retries: int = 2
+    final_status: str = "running"
     events: list[dict[str, Any]] = Field(default_factory=list)
     retry_count: int = 0

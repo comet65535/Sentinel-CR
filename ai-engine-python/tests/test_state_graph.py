@@ -140,7 +140,10 @@ def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:
     assert "memory" in completed_payload
     assert "patch" in completed_payload
     assert "attempts" in completed_payload
-    assert completed_payload["summary"]["final_outcome"] in {"patch_generated", "failed_no_patch"}
+    assert completed_payload["summary"]["final_outcome"] in {
+        "patch_generated_unverified",
+        "failed_no_patch",
+    }
     assert completed_payload["patch"]["status"] in {"generated", "absent"}
     assert all(item["status"] in {"generated", "failed"} for item in completed_payload["attempts"])
 

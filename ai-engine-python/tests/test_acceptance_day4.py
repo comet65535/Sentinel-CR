@@ -78,7 +78,7 @@ public class UserService {
     assert attempts[0]["failure_reason"] is None
     assert attempts[0]["failure_detail"] is None
 
-    assert result["summary"]["final_outcome"] == "patch_generated"
+    assert result["summary"]["final_outcome"] == "patch_generated_unverified"
     assert result["summary"]["memory_match_count"] >= 0
     assert payload["result"] is not None
 
@@ -137,3 +137,22 @@ public class Demo {
     assert attempts[0]["status"] == "failed"
     assert attempts[0]["failure_stage"] == "fixer"
     assert attempts[0]["failure_reason"] == "no_valid_patch"
+
+
+def test_day4_review_completed_must_close_after_fixer_success() -> None:
+    events = _run_review(
+        """
+class Snippet {
+    void run() {
+        System.out.println("ok");
+    }
+}
+""".strip(),
+        task_id="rev_day4_close_once",
+    )
+    event_types = [event["eventType"] for event in events]
+
+    assert "patch_generated" in event_types
+    assert "fixer_completed" in event_types
+    assert event_types.count("review_completed") == 1
+    assert "review_failed" not in event_types
