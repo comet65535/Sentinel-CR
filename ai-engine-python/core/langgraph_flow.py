@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -822,6 +823,10 @@ def _verifier_node(ops: EngineOps):
         failed_stage = verification.get("failed_stage")
         failure_reason = verification.get("failure_reason") or _extract_failure_reason(verification)
         failure_detail = _extract_failure_detail(verification)
+        patch_artifact = state.get("patch_artifact") or {}
+        if failed_stage == "compile" and str(patch_artifact.get("strategy_used") or "") == "syntax_fix":
+            failure_reason = "compile_failed_after_repair"
+        verification["failure_reason"] = failure_reason
         state["attempts"] = list(state.get("attempts", [])) + [
             _build_attempt_summary(
                 fixer_output.get("attempt", {}),
@@ -847,15 +852,29 @@ def _verifier_node(ops: EngineOps):
                     "attempt_no": attempt_no,
                     "failed_stage": failed_stage,
                     "reason": failure_reason,
+                    "failure_detail": failure_detail,
                     "retryable": retryable,
                     "retry_budget_left": retry_budget_left,
                 },
             ),
         )
+        previous_patch_hash = str(patch_artifact.get("content_hash") or "").strip()
+        if not previous_patch_hash:
+            patch_content = str(patch_artifact.get("content") or "")
+            if patch_content:
+                previous_patch_hash = _hash_text(patch_content)
         state["short_term_memory"] = ops.update_short_term_memory(
             state,
             snapshot_type="verifier_failure",
-            payload={"failed_stage": failed_stage, "reason": failure_reason, "detail": failure_detail, "attempt_no": attempt_no},
+            payload={
+                "failed_stage": failed_stage,
+                "reason": failure_reason,
+                "detail": failure_detail,
+                "stderr_summary": failure_detail,
+                "attempt_no": attempt_no,
+                "previous_patch_id": patch_artifact.get("patch_id"),
+                "previous_patch_hash": previous_patch_hash,
+            },
         )
         _record_debug_event(
             state,
@@ -1084,6 +1103,10 @@ def _to_int(value: Any, *, default: int) -> int:
         return parsed if parsed >= 0 else default
     except Exception:
         return default
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _full_state(state: dict[str, Any]) -> dict[str, Any]:

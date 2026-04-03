@@ -245,7 +245,15 @@ def _resolve_failure_reason(
         return None
     if state.no_fix_needed:
         return None
+    if final_outcome == "failed_no_patch":
+        for attempt in reversed(state.attempts):
+            reason = str(attempt.get("failure_reason") or "").strip()
+            if reason:
+                return reason
     if verification_result is not None:
+        top_level_reason = str(verification_result.get("failure_reason") or "").strip()
+        if top_level_reason:
+            return top_level_reason
         stages = verification_result.get("stages", []) or []
         for stage in stages:
             if stage.get("status") == "failed":
@@ -272,6 +280,11 @@ def _resolve_failure_detail(
 ) -> str | None:
     if final_outcome == "verified_patch" or state.no_fix_needed:
         return None
+    if final_outcome == "failed_no_patch":
+        for attempt in reversed(state.attempts):
+            detail = str(attempt.get("failure_detail") or "").strip()
+            if detail:
+                return detail
     if verification_result is not None:
         stages = verification_result.get("stages", []) or []
         for stage in stages:
@@ -282,10 +295,6 @@ def _resolve_failure_detail(
                 stdout_summary = str(stage.get("stdout_summary") or "").strip()
                 if stdout_summary:
                     return stdout_summary
-    for attempt in reversed(state.attempts):
-        detail = str(attempt.get("failure_detail") or "").strip()
-        if detail:
-            return detail
     return None
 
 
@@ -303,14 +312,29 @@ def _build_user_message(
     if no_fix_needed:
         return "Code is healthy. No fix is needed."
     if final_outcome == "verified_patch":
+        if has_syntax_issues:
+            return "Syntax repair completed and compile verification passed."
         return "Patch verified at L1 or above."
     if final_outcome == "patch_generated_unverified":
         return "Patch generated. Verifier was not executed."
     if final_outcome == "failed_no_patch":
+        if failure_reason == "duplicate_patch_candidate":
+            return "Syntax repair retry stopped because the new patch duplicated the previous attempt."
+        if failure_reason == "unsupported_syntax_repair":
+            return "Current syntax issue pattern is not supported by deterministic syntax repair."
+        if failure_reason == "no_repair_candidate":
+            return "Syntax repair could not produce a valid patch candidate."
+        if failure_reason == "syntax_repair_failed":
+            return "Syntax repair failed to build a valid patch."
         if has_syntax_issues:
             return "Analyzer detected syntax issues. Please fix syntax errors before retrying."
         return "No valid patch was generated."
     if final_outcome == "failed_after_retries":
+        if failure_reason == "compile_failed_after_repair":
+            return (
+                f"Syntax repair patch still failed to compile after {retry_count} retries; "
+                "retry budget is exhausted."
+            )
         stage_text = failed_stage or "verifier"
         reason_suffix = f" Latest error: {failure_reason}." if failure_reason else ""
         if retry_exhausted:

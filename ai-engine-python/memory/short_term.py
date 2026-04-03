@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 from typing import Any
 
@@ -40,6 +41,21 @@ def get_latest_verifier_failure(short_term_memory: dict[str, Any] | None) -> dic
     if not short_term_memory:
         return None
     value = short_term_memory.get("latest_verifier_failure")
-    if isinstance(value, dict):
-        return value
-    return None
+    if not isinstance(value, dict):
+        return None
+
+    merged = deepcopy(value)
+    latest_patch = short_term_memory.get("latest_patch")
+    if isinstance(latest_patch, dict):
+        patch_hash = str(latest_patch.get("content_hash") or "").strip()
+        patch_content = str(latest_patch.get("content") or "")
+        if not patch_hash and patch_content:
+            patch_hash = hashlib.sha256(patch_content.encode("utf-8", errors="ignore")).hexdigest()
+        if patch_hash:
+            merged.setdefault("previous_patch_hash", patch_hash)
+        if patch_content:
+            merged.setdefault("previous_patch_content", patch_content)
+        patch_id = str(latest_patch.get("patch_id") or "").strip()
+        if patch_id:
+            merged.setdefault("previous_patch_id", patch_id)
+    return merged
