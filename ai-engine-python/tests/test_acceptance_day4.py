@@ -23,7 +23,30 @@ def _run_review(code_text: str, *, task_id: str) -> list[dict]:
     return [json.loads(line) for line in lines]
 
 
-def test_day4_success_contract_and_event_order() -> None:
+def test_day4_success_contract_and_event_order(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "null_pointer",
+                    "severity": "MEDIUM",
+                    "message": "null may dereference",
+                    "line": 3,
+                    "column": 1,
+                    "ruleId": "forced.issue",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
     events = _run_review(
         """
 public class UserService {
@@ -85,6 +108,30 @@ public class UserService {
 
 def test_day4_failure_contract(monkeypatch) -> None:
     monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "null_pointer",
+                    "severity": "MEDIUM",
+                    "message": "null may dereference",
+                    "line": 3,
+                    "column": 1,
+                    "ruleId": "forced.issue",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+    monkeypatch.setattr(
         "core.state_graph.run_fixer_agent",
         lambda **kwargs: {
             "ok": False,
@@ -139,7 +186,31 @@ public class Demo {
     assert attempts[0]["failure_reason"] == "no_valid_patch"
 
 
-def test_day4_review_completed_must_close_after_fixer_success() -> None:
+def test_day4_review_completed_must_close_after_fixer_success(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "null_pointer",
+                    "severity": "MEDIUM",
+                    "message": "null may dereference",
+                    "line": 3,
+                    "column": 1,
+                    "ruleId": "forced.issue",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
     events = _run_review(
         """
 class Snippet {

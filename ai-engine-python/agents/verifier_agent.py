@@ -10,8 +10,10 @@ def run_verifier_agent(
     code_text: str,
     patch_artifact: dict[str, Any] | None,
     options: dict[str, Any] | None = None,
+    repo_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     options = options or {}
+    repo_profile = repo_profile or {}
     stages: list[dict[str, Any]] = []
     if patch_artifact is None:
         verification = _build_verification_result(
@@ -58,12 +60,42 @@ def run_verifier_agent(
         verification["failure_reason"] = compile_stage.get("reason") or compile_stage.get("stderr_summary")
         return verification
 
-    stages.append(_sanitize_stage_for_result(run_lint_stage()))
-    stages.append(_sanitize_stage_for_result(run_test_stage()))
-    if bool(options.get("enable_security_rescan", False)):
-        stages.append(_sanitize_stage_for_result(run_security_rescan_stage(reason="security rescan not implemented")))
-    else:
-        stages.append(_sanitize_stage_for_result(run_security_rescan_stage()))
+    working_directory = str(options.get("verifier_working_directory") or "").strip() or None
+
+    lint_stage = run_lint_stage(
+        options=options,
+        repo_profile=repo_profile,
+        working_directory=working_directory,
+    )
+    stages.append(_sanitize_stage_for_result(lint_stage))
+    if lint_stage["status"] == "failed":
+        verification = _build_verification_result(status="failed", stages=stages)
+        verification["retryable"] = bool(lint_stage.get("retryable", True))
+        verification["failure_reason"] = lint_stage.get("reason") or lint_stage.get("stderr_summary")
+        return verification
+
+    test_stage = run_test_stage(
+        options=options,
+        repo_profile=repo_profile,
+        working_directory=working_directory,
+    )
+    stages.append(_sanitize_stage_for_result(test_stage))
+    if test_stage["status"] == "failed":
+        verification = _build_verification_result(status="failed", stages=stages)
+        verification["retryable"] = bool(test_stage.get("retryable", True))
+        verification["failure_reason"] = test_stage.get("reason") or test_stage.get("stderr_summary")
+        return verification
+
+    security_stage = run_security_rescan_stage(
+        options=options,
+        working_directory=working_directory,
+    )
+    stages.append(_sanitize_stage_for_result(security_stage))
+    if security_stage["status"] == "failed":
+        verification = _build_verification_result(status="failed", stages=stages)
+        verification["retryable"] = bool(security_stage.get("retryable", True))
+        verification["failure_reason"] = security_stage.get("reason") or security_stage.get("stderr_summary")
+        return verification
 
     verification = _build_verification_result(status="passed", stages=stages)
     verification["retryable"] = False

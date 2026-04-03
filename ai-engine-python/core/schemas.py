@@ -58,10 +58,19 @@ class EngineState(BaseModel):
     repair_plan: list[dict[str, Any]] = Field(default_factory=list)
     planner_summary: dict[str, int] = Field(default_factory=default_planner_summary)
     memory_matches: list[dict[str, Any]] = Field(default_factory=list)
+    short_term_memory: dict[str, Any] = Field(default_factory=dict)
+    repo_profile: dict[str, Any] = Field(default_factory=dict)
+    case_store_summary: dict[str, Any] = Field(default_factory=dict)
     patch_artifact: dict[str, Any] | None = None
     attempts: list[dict[str, Any]] = Field(default_factory=list)
     patch: dict[str, Any] | None = None
     verification_result: dict[str, Any] | None = None
+    context_budget: dict[str, Any] = Field(default_factory=dict)
+    selected_context: list[dict[str, Any]] = Field(default_factory=list)
+    tool_trace: list[dict[str, Any]] = Field(default_factory=list)
+    options: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    debug_enabled: bool = False
     enable_verifier: bool = False
     enable_security_rescan: bool = False
     max_retries: int = 2

@@ -10,6 +10,11 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     patch_status = "generated" if patch_artifact else "absent"
     attempts = [_sanitize_attempt(item) for item in state.attempts]
     memory_matches = list(state.memory_matches or [])
+    short_term_memory = dict(state.short_term_memory or {})
+    repo_profile = dict(state.repo_profile or {})
+    case_store_summary = dict(state.case_store_summary or {})
+    context_budget = dict(state.context_budget or {})
+    tool_trace = list(state.tool_trace or [])
 
     verification_result = _sanitize_verification(state.verification_result)
     verified_level = str((verification_result or {}).get("verified_level") or "L0")
@@ -68,9 +73,17 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "repair_plan": state.repair_plan,
         "planner_summary": state.planner_summary,
         "memory": {"matches": memory_matches},
+        "context_budget": context_budget,
+        "tool_trace": tool_trace,
         "patch": patch_block,
         "attempts": attempts,
         "verification": verification_result,
+    }
+    result_block["memory"] = {
+        "matches": memory_matches,
+        "short_term": short_term_memory,
+        "repo_profile": repo_profile,
+        "case_store": case_store_summary,
     }
 
     return {
@@ -88,7 +101,9 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "issue_graph": state.issue_graph,
         "repair_plan": state.repair_plan,
         "planner_summary": state.planner_summary,
-        "memory": {"matches": memory_matches},
+        "memory": result_block["memory"],
+        "context_budget": context_budget,
+        "tool_trace": tool_trace,
         "patch": patch_block,
         "attempts": attempts,
         "verification": verification_result,

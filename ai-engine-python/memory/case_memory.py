@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .case_store import promote_verified_patch_to_case, search_cases
+
 DEFAULT_SNIPPET_FILE = "snippet.java"
 
 
@@ -137,6 +139,10 @@ def retrieve_case_matches(
         if not query_tokens:
             return []
 
+        persisted_matches = search_cases(query_tokens=query_tokens, top_k=top_k)
+        if persisted_matches:
+            return [_to_case_match(item) for item in persisted_matches]
+
         scored: list[tuple[float, dict[str, Any]]] = []
         for case in CASE_LIBRARY:
             match_tokens = set(case.get("trigger_signals", [])) | {str(case.get("pattern", "")), str(case.get("strategy", ""))}
@@ -169,6 +175,24 @@ def retrieve_case_matches(
         return [item[1] for item in scored[:limit]]
     except Exception:
         return []
+
+
+def promote_patch_from_verification(
+    *,
+    patch: dict[str, Any] | None,
+    verification: dict[str, Any] | None,
+    tool_trace: list[dict[str, Any]] | None,
+    accepted_by_human: bool = False,
+) -> dict[str, Any] | None:
+    try:
+        return promote_verified_patch_to_case(
+            patch=patch,
+            verification=verification,
+            tool_trace=tool_trace,
+            accepted_by_human=accepted_by_human,
+        )
+    except Exception:
+        return None
 
 
 def resolve_default_target_file(issues: list[dict[str, Any]]) -> str:
@@ -226,3 +250,18 @@ def _collect_context_tokens(context_summary: dict[str, Any]) -> set[str]:
 def _split_keywords(text: str) -> set[str]:
     raw = text.replace(".", " ").replace("-", " ").replace("_", " ")
     return {part.strip() for part in raw.split() if part.strip()}
+
+
+def _to_case_match(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "case_id": item.get("case_id"),
+        "pattern": item.get("pattern"),
+        "score": item.get("score", item.get("success_rate", 0.0)),
+        "trigger_signals": item.get("trigger_signals", []),
+        "strategy": item.get("strategy", item.get("pattern")),
+        "risk_note": item.get("risk_note", ""),
+        "success_rate": item.get("success_rate", 0.0),
+        "before_code": item.get("before_code", ""),
+        "after_code": item.get("after_code", ""),
+        "diff": item.get("diff", ""),
+    }

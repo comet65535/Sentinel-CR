@@ -13,6 +13,7 @@ public class CreateReviewRequest {
     @NotBlank
     private String sourceType;
     private Map<String, Object> options = Map.of();
+    private Map<String, Object> metadata = Map.of();
 
     public String getCodeText() {
         return codeText;
@@ -44,5 +45,13 @@ public class CreateReviewRequest {
 
     public void setOptions(Map<String, Object> options) {
         this.options = options == null ? Map.of() : options;
+    }
+
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
+    public void setMetadata(Map<String, Object> metadata) {
+        this.metadata = metadata == null ? Map.of() : metadata;
     }
 }

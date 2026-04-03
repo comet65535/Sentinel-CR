@@ -16,7 +16,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.FluxExchangeResult;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {"sentinel.ai.mode=mock"})
 class ReviewApiIntegrationTests {
     @LocalServerPort
     private int serverPort;

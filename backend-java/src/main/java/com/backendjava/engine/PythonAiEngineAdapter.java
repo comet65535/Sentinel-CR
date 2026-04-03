@@ -30,13 +30,20 @@ public class PythonAiEngineAdapter implements AiEngineAdapter {
 
     @Override
     public Flux<EngineEvent> startReview(ReviewTask task) {
+        Map<String, Object> metadata = task.getMetadata();
+        if (metadata.isEmpty()) {
+            metadata = Map.of(
+                    "requestedBy", "backend-java",
+                    "debug", false);
+        }
+
         PythonReviewRunRequest requestBody = new PythonReviewRunRequest(
                 task.getTaskId(),
                 task.getCodeText(),
                 task.getLanguage(),
                 task.getSourceType(),
                 task.getOptions(),
-                Map.of("requestedBy", "backend-java", "debug", false));
+                metadata);
 
         return webClient.post()
                 .uri("/internal/reviews/run")

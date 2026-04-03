@@ -1,15 +1,50 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import type { ReviewEvent } from '../types/review'
 import type { ReadableStageTimelineItem } from '../utils/reviewEventView'
+import IssueGraphPanel from './IssueGraphPanel.vue'
+import TokenContextPanel from './TokenContextPanel.vue'
 
 const props = defineProps<{
   open: boolean
   timeline: ReadableStageTimelineItem[]
   debugMode: boolean
+  reviewResult: Record<string, unknown> | null
+  events: ReviewEvent[]
 }>()
 
 const emit = defineEmits<{
   (event: 'close'): void
 }>()
+
+const tab = ref<'overview' | 'issue' | 'context' | 'verification' | 'memory' | 'raw'>('overview')
+
+const latestIssueGraph = computed(() => {
+  const fromResult = props.reviewResult?.issue_graph
+  if (fromResult && typeof fromResult === 'object') return fromResult as Record<string, unknown>
+  for (let i = props.events.length - 1; i >= 0; i -= 1) {
+    const event = props.events[i]
+    if (event.eventType === 'issue_graph_built' && event.payload.issue_graph) {
+      return event.payload.issue_graph as Record<string, unknown>
+    }
+  }
+  return null
+})
+
+const latestContextBudget = computed(() => {
+  const fromResult = props.reviewResult?.context_budget
+  if (fromResult && typeof fromResult === 'object') return fromResult as Record<string, unknown>
+  for (let i = props.events.length - 1; i >= 0; i -= 1) {
+    const event = props.events[i]
+    if (
+      (event.eventType === 'context_budget_updated' || event.eventType === 'context_resource_loaded') &&
+      event.payload.context_budget
+    ) {
+      return event.payload.context_budget as Record<string, unknown>
+    }
+  }
+  return null
+})
 
 function closePanel() {
   emit('close')
@@ -42,35 +77,65 @@ function stringify(value: unknown): string {
       <button type="button" class="close-btn" @click="closePanel">关闭</button>
     </header>
 
-    <ul class="timeline-list">
-      <li v-for="stage in timeline" :key="stage.key" class="timeline-item" :class="`state-${stage.status}`">
-        <div class="item-head">
-          <h3>{{ stage.title }}</h3>
-          <span>{{ statusText(stage.status) }}</span>
-        </div>
-        <p class="description">{{ stage.description }}</p>
-        <p class="summary">{{ stage.summary }}</p>
-        <p v-if="stage.failureReason" class="failure">失败原因：{{ stage.failureReason }}</p>
-        <details v-if="stage.detailLog" class="trace">
-          <summary>查看详细日志</summary>
-          <pre>{{ stage.detailLog }}</pre>
-        </details>
+    <nav class="tabs">
+      <button type="button" :class="{ active: tab === 'overview' }" @click="tab = 'overview'">Overview</button>
+      <button type="button" :class="{ active: tab === 'issue' }" @click="tab = 'issue'">Issue Graph</button>
+      <button type="button" :class="{ active: tab === 'context' }" @click="tab = 'context'">Context</button>
+      <button type="button" :class="{ active: tab === 'verification' }" @click="tab = 'verification'">Verification</button>
+      <button type="button" :class="{ active: tab === 'memory' }" @click="tab = 'memory'">Memory</button>
+      <button type="button" :class="{ active: tab === 'raw' }" @click="tab = 'raw'">Raw Payload</button>
+    </nav>
 
-        <template v-if="debugMode && stage.events.length > 0">
-          <div class="debug-block" v-for="event in stage.events" :key="event.sequence">
-            <p><strong>{{ event.eventType }}</strong> · #{{ event.sequence }}</p>
-            <p>{{ event.message }}</p>
-            <pre>{{ stringify(event.payload) }}</pre>
+    <section v-if="tab === 'overview'" class="panel">
+      <ul class="timeline-list">
+        <li v-for="stage in timeline" :key="stage.key" class="timeline-item" :class="`state-${stage.status}`">
+          <div class="item-head">
+            <h3>{{ stage.title }}</h3>
+            <span>{{ statusText(stage.status) }}</span>
           </div>
-        </template>
-      </li>
-    </ul>
+          <p class="description">{{ stage.description }}</p>
+          <p class="summary">{{ stage.summary }}</p>
+          <p v-if="stage.failureReason" class="failure">失败原因：{{ stage.failureReason }}</p>
+          <details v-if="stage.detailLog" class="trace">
+            <summary>查看详细日志</summary>
+            <pre>{{ stage.detailLog }}</pre>
+          </details>
+        </li>
+      </ul>
+    </section>
+
+    <section v-if="tab === 'issue'" class="panel">
+      <IssueGraphPanel :issue-graph="latestIssueGraph" />
+    </section>
+
+    <section v-if="tab === 'context'" class="panel">
+      <TokenContextPanel :context-budget="latestContextBudget" />
+    </section>
+
+    <section v-if="tab === 'verification'" class="panel">
+      <pre>{{ stringify(reviewResult?.verification ?? {}) }}</pre>
+    </section>
+
+    <section v-if="tab === 'memory'" class="panel">
+      <pre>{{ stringify(reviewResult?.memory ?? {}) }}</pre>
+    </section>
+
+    <section v-if="tab === 'raw'" class="panel">
+      <pre>{{ stringify(reviewResult ?? {}) }}</pre>
+      <template v-if="debugMode">
+        <div class="debug-block" v-for="event in events" :key="event.sequence">
+          <p><strong>{{ event.eventType }}</strong> · #{{ event.sequence }}</p>
+          <p>{{ event.message }}</p>
+          <pre>{{ stringify(event.payload) }}</pre>
+        </div>
+      </template>
+    </section>
   </aside>
 </template>
 
 <style scoped>
 .detail-panel {
-  width: 380px;
+  width: 420px;
   border: 1px solid #dbe3ee;
   background: #fff;
   border-radius: 16px;
@@ -111,6 +176,39 @@ function stringify(value: unknown): string {
   color: #264a60;
   padding: 0.32rem 0.7rem;
   cursor: pointer;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.tabs button {
+  border: 1px solid #d1dced;
+  background: #f8fbff;
+  color: #2f5268;
+  border-radius: 8px;
+  padding: 0.32rem 0.42rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  background: #e8f4ff;
+  border-color: #8fb7de;
+}
+
+.panel pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid #d9e2f0;
+  background: #f5f9fd;
+  border-radius: 8px;
+  padding: 0.45rem;
+  color: #2f4f63;
+  font-size: 0.76rem;
 }
 
 .timeline-list {
@@ -173,18 +271,6 @@ function stringify(value: unknown): string {
   font-size: 0.82rem;
 }
 
-.trace pre {
-  margin: 0.35rem 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  border: 1px solid #d9e2f0;
-  background: #f5f9fd;
-  border-radius: 8px;
-  padding: 0.45rem;
-  color: #2f4f63;
-  font-size: 0.76rem;
-}
-
 .state-running {
   border-color: #8fb7de;
   background: #f1f8ff;
@@ -208,25 +294,13 @@ function stringify(value: unknown): string {
 .debug-block {
   border-top: 1px dashed #cfd9e8;
   padding-top: 0.4rem;
-  margin-top: 0.15rem;
+  margin-top: 0.35rem;
 }
 
 .debug-block p {
   margin: 0.2rem 0;
   color: #3f5f74;
   font-size: 0.82rem;
-}
-
-.debug-block pre {
-  margin: 0.2rem 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  border: 1px solid #d9e2f0;
-  background: #f4f8fd;
-  border-radius: 8px;
-  padding: 0.45rem;
-  font-size: 0.76rem;
-  color: #2f4f63;
 }
 
 @media (max-width: 1100px) {

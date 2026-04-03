@@ -6,28 +6,25 @@ from pathlib import Path
 from typing import Any
 
 
-def run_test_stage(
+def run_security_rescan_stage(
     *,
     options: dict[str, Any] | None = None,
-    repo_profile: dict[str, Any] | None = None,
     working_directory: str | None = None,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 45,
 ) -> dict[str, Any]:
     options = options or {}
-    repo_profile = repo_profile or {}
-    command = (
-        str(options.get("test_command") or "").strip()
-        or str(repo_profile.get("preferred_test_command") or "").strip()
-    )
+    if not bool(options.get("enable_security_rescan", False)):
+        return _skipped("security rescan disabled")
+
+    command = str(options.get("security_rescan_command") or options.get("semgrep_command") or "").strip()
     if not command:
-        return _skipped_stage(stage="test", reason="test command not configured")
+        return _skipped("security rescan command not configured")
     if not working_directory:
-        return _skipped_stage(stage="test", reason="test workspace not configured")
+        return _skipped("security rescan workspace not configured")
 
     try:
-        parsed = shlex.split(command)
         completed = subprocess.run(
-            parsed,
+            shlex.split(command),
             cwd=str(Path(working_directory)),
             capture_output=True,
             text=True,
@@ -36,7 +33,7 @@ def run_test_stage(
         )
     except FileNotFoundError:
         return {
-            "stage": "test",
+            "stage": "security_rescan",
             "status": "failed",
             "exit_code": 127,
             "stdout_summary": "",
@@ -46,28 +43,28 @@ def run_test_stage(
         }
     except subprocess.TimeoutExpired:
         return {
-            "stage": "test",
+            "stage": "security_rescan",
             "status": "failed",
             "exit_code": 124,
             "stdout_summary": "",
-            "stderr_summary": "test timeout",
-            "reason": "test_timeout",
+            "stderr_summary": "security rescan timeout",
+            "reason": "security_rescan_timeout",
             "retryable": True,
         }
     except Exception as exc:
         return {
-            "stage": "test",
+            "stage": "security_rescan",
             "status": "failed",
             "exit_code": 1,
             "stdout_summary": "",
             "stderr_summary": _compact(str(exc)),
-            "reason": "test_exec_error",
+            "reason": "security_rescan_exec_error",
             "retryable": True,
         }
 
     if completed.returncode == 0:
         return {
-            "stage": "test",
+            "stage": "security_rescan",
             "status": "passed",
             "exit_code": 0,
             "stdout_summary": _compact(completed.stdout),
@@ -77,19 +74,19 @@ def run_test_stage(
         }
 
     return {
-        "stage": "test",
+        "stage": "security_rescan",
         "status": "failed",
         "exit_code": int(completed.returncode),
         "stdout_summary": _compact(completed.stdout),
-        "stderr_summary": _compact(completed.stderr) or "test failed",
-        "reason": "test_failed",
+        "stderr_summary": _compact(completed.stderr) or "security rescan failed",
+        "reason": "security_rescan_failed",
         "retryable": True,
     }
 
 
-def _skipped_stage(*, stage: str, reason: str) -> dict[str, Any]:
+def _skipped(reason: str) -> dict[str, Any]:
     return {
-        "stage": stage,
+        "stage": "security_rescan",
         "status": "skipped",
         "exit_code": None,
         "stdout_summary": "",

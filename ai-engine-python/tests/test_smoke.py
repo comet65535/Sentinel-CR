@@ -16,7 +16,31 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "UP", "service": "ai-engine-python"}
 
 
-def test_internal_review_run_returns_day3_ndjson_stream() -> None:
+def test_internal_review_run_returns_day3_ndjson_stream(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "null_pointer",
+                    "severity": "MEDIUM",
+                    "message": "null may dereference",
+                    "line": 3,
+                    "column": 1,
+                    "ruleId": "forced.issue",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
     request_body = {
         "taskId": "rev_test_001",
         "codeText": "public class Demo { public String hi(String n){ return \"hi\" + n; } }",

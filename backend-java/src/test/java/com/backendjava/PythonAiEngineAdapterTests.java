@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.ObjectMapper;
 
 class PythonAiEngineAdapterTests {
 
@@ -61,7 +60,8 @@ class PythonAiEngineAdapterTests {
                     "public class Demo {}",
                     "java",
                     "snippet",
-                    Map.of("enable_verifier", true, "max_retries", 2));
+                    Map.of("enable_verifier", true, "max_retries", 2),
+                    Map.of("requested_by", "backend-java-test", "debug_mode", true));
 
             List<EngineEvent> events =
                     adapter.startReview(task).collectList().block(Duration.ofSeconds(5));
@@ -73,12 +73,12 @@ class PythonAiEngineAdapterTests {
             assertThat(events.get(2).status()).isEqualTo(ReviewTaskStatus.COMPLETED);
             assertThat(events.get(0).payload()).containsEntry("source", "python-engine");
 
-            ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> requestBody = mapper.readValue(capturedBody.get(), Map.class);
-            assertThat(requestBody.get("options")).isInstanceOf(Map.class);
-            assertThat((Map<String, Object>) requestBody.get("options"))
-                    .containsEntry("enable_verifier", true)
-                    .containsEntry("max_retries", 2);
+            assertThat(capturedBody.get()).contains("\"options\"");
+            assertThat(capturedBody.get()).contains("\"enable_verifier\":true");
+            assertThat(capturedBody.get()).contains("\"max_retries\":2");
+            assertThat(capturedBody.get()).contains("\"metadata\"");
+            assertThat(capturedBody.get()).contains("\"requested_by\":\"backend-java-test\"");
+            assertThat(capturedBody.get()).contains("\"debug_mode\":true");
         } finally {
             server.stop(0);
         }

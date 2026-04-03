@@ -53,7 +53,8 @@ public class ReviewService {
                         request.getCodeText(),
                         request.getLanguage(),
                         request.getSourceType(),
-                        request.getOptions());
+                        request.getOptions(),
+                        request.getMetadata());
         taskRepository.save(task);
         reviewEventBus.initializeTaskStream(taskId);
 

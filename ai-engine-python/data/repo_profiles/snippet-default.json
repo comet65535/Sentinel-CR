@@ -1,0 +1,10 @@
+﻿{
+  "repo_id": "snippet-default",
+  "style_preferences": ["prefer_small_patches", "preserve_public_signatures"],
+  "common_issue_types": ["null_pointer", "sql_injection"],
+  "common_failed_stages": ["compile"],
+  "preferred_build_command": "mvn -q -DskipTests compile",
+  "preferred_test_command": "mvn -q test",
+  "rejected_patch_patterns": ["broad_refactor"],
+  "hotspots": ["snippet.java"]
+}

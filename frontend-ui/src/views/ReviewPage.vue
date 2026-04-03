@@ -202,6 +202,14 @@ async function submitReview() {
         enable_verifier: true,
         max_retries: 2,
         enable_security_rescan: false,
+        debug: debugMode.value,
+        context_policy: 'lazy',
+        context_budget_tokens: 12000,
+        persist_verified_case: false,
+      },
+      metadata: {
+        requested_by: 'frontend-ui',
+        debug_mode: debugMode.value,
       },
     })
     taskId.value = response.taskId
@@ -310,6 +318,8 @@ onBeforeUnmount(() => {
       :open="detailPanelOpen"
       :timeline="stageTimeline"
       :debug-mode="debugMode"
+      :review-result="reviewResult"
+      :events="sortedEvents"
       @close="closeDetailPanel"
     />
   </main>

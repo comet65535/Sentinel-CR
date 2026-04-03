@@ -8,7 +8,12 @@ export interface CreateReviewRequest {
     enable_verifier?: boolean
     max_retries?: number
     enable_security_rescan?: boolean
+    debug?: boolean
+    context_policy?: 'none' | 'lazy'
+    context_budget_tokens?: number
+    persist_verified_case?: boolean
   }
+  metadata?: Record<string, unknown>
 }
 
 export interface CreateReviewResponse {
