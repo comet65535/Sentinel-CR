@@ -350,179 +350,581 @@ Verifier 要按阶段执行：
   - fail -> retry
 - 这是整个项目最重要的可演示能力
 
----
 
-## ✅ Day 6：Lazy Context System + Repo-level Memory + PR 分析入口
-
-### 当天目标
-今天要做的是把系统从“修一段代码”提升到“开始像真实工程工具”。
-
-### 要做的事情
-
-#### 1. `context_budget.py`
-实现最小版本的 Lazy Context：
-- 默认只取问题附近上下文
-- 如果修复失败，再扩展更多代码
-- 优先返回 AST summary / symbol summary，而不是整段全文
-
-#### 2. MCP Resource 获取策略
-Java MCP Server 提供：
-- 文件树
-- 单文件内容
-- schema / test summary
-- PR diff
-
-Python 侧按需请求，而不是一次性拉全量内容。
-
-#### 3. `repo_memory.py`
-加入最小仓库级记忆：
-- 某个 repo 习惯的命名风格
-- 常见的风险区域
-- 历史被拒绝 patch 模式
-
-#### 4. PR 级入口
-支持输入：
-- Git 仓库链接
-- PR 链接
-- diff 文本
-
-然后：
-- 先解析 diff
-- 再分析 impacted symbols
-- 最后只在受影响区域做 repair planning
-
-### 今天结束时的交付物
-- 项目不再局限于“单代码框输入”
-- 能讲出自己支持 repo-aware / PR-aware workflow
-- 上下文获取策略从“全量灌输”升级为“按需取证”
 
 ---
 
-## ✅ Day 7：Benchmark + Failure Taxonomy + UI 打磨 + 录屏
+# 新 Day 6：平台能力日
 
-### 当天目标
-把项目从“能跑”打磨到“能展示、能量化、能说服别人”。
+## 主题：LangGraph + Memory + MCP/Lazy Context + Issue Graph 可视化 + L2/L3/L4 骨架
 
-### 要做的事情
+### Day 6 的总目标
 
-#### 1. `benchmark/golden_cases/`
-构造 10 个最有代表性的 Java 样本：
-- NullPointer
-- SQL Injection
-- N+1 Query
-- Concurrency Race
-- Bad Exception Handling
-- Missing Resource Close
-- Wrong API Usage
-- Missing Validation
-- Improper Logging
-- Regression-prone Refactor
+把目前“Day5 最小闭环”升级成 **真正的 Agent 平台骨架**。
+这一天结束时，项目必须从“会修一个 snippet”进化为：
 
-#### 2. `run_eval.py`
-一键跑批评估，输出：
-- detection rate
-- patch generation rate
-- apply pass rate
-- compile pass rate
-- lint pass rate
-- test pass rate
-- verified patch rate
-- avg retries
-- avg latency
+* **真实使用 LangGraph**
+* 有 **短期记忆 / 长期结构化记忆 / 仓库级记忆**
+* 有 **MCP 风格的 Resources + Tools 双通道**
+* 有 **Lazy Context / token 预算**
+* 前端能展示 **Issue Graph** 和 **token / context 使用**
+* Verifier 不再只有 L1，而是补齐 **L2/L3/L4 的真实阶段骨架**
 
-#### 3. `failure_taxonomy.py`
-给失败结果做分类：
-- F1 detection miss
-- F2 wrong patch
-- F3 compile error
-- F4 test fail
-- F5 regression introduced
-- F6 insufficient context
-
-#### 4. 前端 UI 打磨
-至少完成：
-- 事件时间轴
-- 红绿 Diff
-- Verified Level 标签
-- Debug Mode 开关
-- 失败原因展示
-
-#### 5. 演示视频
-准备一个 3 分钟稳定 Demo：
-1. 输入有问题的 Java 代码
-2. 展示系统事件流
-3. 展示 patch 和验证等级
-4. 展示 benchmark 结果图
-
-### 今天结束时的交付物
-- 一套可展示的完整系统
-- 一组可量化的评估结果
-- 一段足够稳的演示链路
+README 里这些能力本来就是目标：短期/长期/Repo-level Memory、MCP Server + Lazy Context、Issue Graph Planner、L1-L4 多阶段验证、Benchmark 和结构化评测，这一天就是把这些“写在 README 里的理想态”开始变成真实代码。([GitHub][2])
 
 ---
 
-## 📌 每天都要注意的工程原则
+## 6.1 彻底把 `state_graph.py` 改造成 **LangGraph**
 
-### 1. 不要让 LLM 做它不擅长的事情
-- 能用分析器确定的，就不要让 LLM 猜
-- 能用规则检出的，就不要用 Prompt 试探
+### 目标
 
-### 2. 不要让 patch 直接出现在用户面前
-- 一定要先验证
-- 最少也要 compile
-- 最好给出 Verified Level
+当前代码虽然叫 `state_graph.py`，但仓库检索不到 `langgraph / StateGraph` 的实际使用；README 又明确把 LangGraph 写进了 Python AI Engine 技术栈。Day6 必须把这个“名不副实”的状态扭正。([GitHub][2])
 
-### 3. 不要把上下文一股脑塞进模型
-- 先摘要
-- 再按需扩展
-- 要有 budget 意识
+### 要做的事
 
-### 4. 不要只统计成功率
-- 要知道失败发生在哪一步
-- 要能用 failure taxonomy 指导优化
+* 新增真正的 `LangGraph` 工作流定义：
 
-### 5. 不要过早把架构做得过于花哨
-这 7 天里，最重要的不是“多智能体数量”，而是：
-- Analyzer 可靠
-- Planner 清晰
-- Fixer 可控
-- Verifier 真能跑
-- Benchmark 能量化
+  * `bootstrap`
+  * `analyzer`
+  * `planner`
+  * `memory_retrieval`
+  * `fixer`
+  * `verifier`
+  * `retry_router`
+  * `reporter`
+* 把当前 async generator 事件发射逻辑包进 LangGraph 节点内部
+* 节点之间显式路由：
 
----
+  * `no_fix_needed -> reporter`
+  * `fixer_failed -> reporter`
+  * `verifier_passed -> reporter`
+  * `verifier_failed + retryable -> retry_router -> fixer`
+  * `verifier_failed + retry_exhausted -> reporter`
+* 给每个节点补统一输入/输出 contract
 
-## 🌟 这份计划相较旧版本的关键提升总结
+### 交付物
 
-这次计划相较之前，做了这些本质升级：
+* `ai-engine-python/core/langgraph_flow.py`
+* `ai-engine-python/core/state_graph.py` 改成 wrapper / adapter，而不是再手写流程
+* `tests/test_langgraph_flow.py`
 
-### 升级 1：补上了 Issue Graph Planner
-旧版本里只有“有问题 -> 生成 patch”，缺乏修复依赖关系和冲突管理。  
-现在增加了问题图建模，系统不再盲修。
+### 验收
 
-### 升级 2：Verifier 从单阶段变成多阶段
-旧版本主要强调 compile。  
-现在明确拆成 patch apply / compile / lint / test / rescan，输出可量化验证等级。
-
-### 升级 3：RAG 从文档检索升级为案例经验库
-旧版本里经验更像“规范文本”。  
-现在变成带 before/after/diff/success_rate 的结构化修复经验。
-
-### 升级 4：引入 Lazy Context
-旧版本默认假设上下文可以直接拿全。  
-现在加入上下文预算和按需加载，更接近真实仓库场景。
-
-### 升级 5：UI 从展示结果升级为展示系统状态
-旧版本偏“最后给报告”。  
-现在强调事件流、验证等级、调试面板，产品感更强。
-
-### 升级 6：评测从打分升级为失败分类
-旧版本有 benchmark 思路，但不够可诊断。  
-现在加入 failure taxonomy，后续优化方向会非常清晰。
+* 可以打印出 LangGraph 节点图
+* 一次正常请求能走完整图
+* 一次失败请求能走 retry 分支
+* 零问题样本能直接 `reporter`
 
 ---
 
-## 🏁 最后一句
+## 6.2 记忆系统一次补齐：短期 / 长期 / 仓库级
 
-这 7 天计划真正要做成的，不是一个“看起来很像 AI 的项目”，而是一个：
+### 目标
 
-> **能发现问题、能生成补丁、能验证补丁、能解释失败、能持续迭代的工程化 Code Repair Agent**
+README 已经把记忆分成三层：短期记忆、长期结构化案例、Repo-level Memory；当前 main 里你已经有静态 `case_memory.py`，但 `short_term.py / repo_memory.py` 还没有真正进入主链路。Day6 要把这三层都落下去。([GitHub][2])
+
+### 要做的事
+
+#### A. 短期记忆 `memory/short_term.py`
+
+存当前线程上下文：
+
+* 最近一次 analyzer evidence
+* 最近一次 patch
+* 最近一次 verifier failure
+* 最近一次 retry context
+* 用户显式约束
+* 当前 token 预算消耗
+
+#### B. 长期记忆 `memory/case_memory.py`
+
+把现有静态案例库升级为：
+
+* `cases.jsonl` 或 `sqlite`/`duckdb`
+* 结构字段固定：
+
+  * `case_id`
+  * `pattern`
+  * `trigger_signals`
+  * `before_code`
+  * `after_code`
+  * `diff`
+  * `risk_note`
+  * `success_rate`
+  * `verified_level`
+  * `accepted_by_human`
+  * `tool_trace`
+* 新增 `promote_verified_patch_to_case(...)`
+
+  * 通过验证且人工确认的 patch，可回写为案例单元
+
+#### C. 仓库级记忆 `memory/repo_memory.py`
+
+记录：
+
+* repo 风格偏好
+* 常见 issue 类型
+* 常见失败阶段
+* 常见测试命令
+* 常见被拒 patch pattern
+* 关键 symbol / 模块风险区
+
+### 交付物
+
+* `memory/short_term.py`
+* `memory/repo_memory.py`
+* `memory/case_store.py`
+* `data/cases/*.jsonl`
+* `data/repo_profiles/*.json`
+
+### 验收
+
+* 新请求可读 repo profile
+* retry 时能读到上一轮失败信息
+* 通过验证的 patch 可以沉淀回 case store
+
+---
+
+## 6.3 MCP Server + Lazy Context System
+
+### 目标
+
+README 对 MCP 的要求非常明确：Resources + Tools 双通道，解决上下文过长，并且按 token budget 渐进加载。当前仓库没看到 `context_budget` 和前端 token 展示，所以 Day6 必须把这块从“README 理想”变成“真实接口”。([GitHub][2])
+
+### 要做的事
+
+#### A. Java Backend 做 MCP 风格资源接口
+
+新增 `/internal/mcp/resources/*`
+
+* `GET /repo-tree`
+* `GET /file?path=...`
+* `GET /schema`
+* `GET /build-log-summary`
+* `GET /test-summary`
+* `POST /pr-diff/parse`
+
+#### B. Java Backend 做 MCP 风格工具接口
+
+新增 `/internal/mcp/tools/*`
+
+* `POST /resolve-symbol`
+* `POST /find-references`
+* `POST /run-analyzer`
+* `POST /run-sandbox`
+* `POST /query-tests`
+
+#### C. Python 侧 `core/context_budget.py`
+
+实现：
+
+* token 预算对象
+* 先摘要再扩展
+* 先 diff 周边，再 symbol graph，再全文件
+* 预算不足时触发 `context_budget_exhausted`
+
+#### D. `core/mcp_client.py`
+
+让 Planner / Fixer / Verifier 可以按需拉：
+
+* 文件片段
+* impacted symbols
+* build/test summary
+
+### 前端必须新增
+
+* 当前 token 使用量
+* 当前 context source 列表
+* 当前 context load stage
+* Debug 下可看：
+
+  * 拉了哪些资源
+  * why this file / why this symbol
+
+### 交付物
+
+* `backend-java/.../mcp/*`
+* `ai-engine-python/core/context_budget.py`
+* `ai-engine-python/core/mcp_client.py`
+* 前端 token/context 面板
+
+### 验收
+
+* 处理超长上下文时不再把整文件直接塞进模型
+* 前端能实时看到 token / context 消耗
+* Planner/Fixer/Verifier 至少有一次真实走 MCP 拉资源
+
+---
+
+## 6.4 Issue Graph 升级到“可视化 + 可交互”
+
+### 目标
+
+你明确要求不仅要有 Issue Graph，还要“甚至做到可视化”。现在主链路里已经会发 `issue_graph_built`，但前端当前没有 Issue Graph 展示。Day6 必须补齐。([GitHub][3])
+
+### 要做的事
+
+* 标准化 `issue_graph` 结构：
+
+  * nodes
+  * edges
+  * node_type
+  * severity
+  * file_path
+  * symbol_refs
+  * depends_on
+  * conflicts_with
+  * fix_scope
+* 前端新增 `IssueGraphPanel.vue`
+
+  * 用 `vis-network` / `cytoscape.js`
+* 点击节点后联动：
+
+  * 右侧详情
+  * repair plan item
+  * patch diff
+  * verifier result
+* 支持两种视图：
+
+  * 问题依赖图
+  * 文件 / symbol 影响图
+
+### 验收
+
+* 页面里能看到图
+* 点击某个 issue 节点能看：
+
+  * 关联 symbol
+  * 修复策略
+  * patch 目标
+  * verifier 结果
+
+---
+
+## 6.5 Verifier 升级到真实 L2 / L3 / L4 骨架
+
+### 目标
+
+你要求的是完整 L1-L4，而不是 compile-only。Day5 已经有 L1 基线，Day6 必须把 L2/L3/L4 的真实阶段接上。README 也把 L1-L4 定义得很清楚。([GitHub][2])
+
+### 要做的事
+
+* `tools/lint_runner.py`
+
+  * Java 优先接 `checkstyle` 或 `spotbugs` 最小版本
+* `tools/test_runner.py`
+
+  * 先支持：
+
+    * snippet 回归测试
+    * Maven/Gradle test 命令
+    * 指定测试类
+* `tools/security_rescan.py`
+
+  * 先走 Semgrep rescan
+* `agents/verifier_agent.py`
+
+  * 真正产出：
+
+    * L1 = patch_apply + compile
+    * L2 = + lint
+    * L3 = + test
+    * L4 = + security_rescan
+* `summary.verified_level` 和前端结果卡要与 L1-L4 严格对齐
+
+### 验收
+
+* 至少一条样本能到 L2
+* 至少一条样本能到 L3
+* 至少一条样本能跑 L4 rescan
+* 失败时明确知道停在哪个 stage
+
+---
+
+## 6.6 Day 6 验收标准
+
+Day 6 结束时，必须满足：
+
+* 真的用了 LangGraph
+* 有短期 / 长期 / 仓库级记忆三层
+* 有 MCP 资源/工具接口
+* 有 Lazy Context 和 token 展示
+* 有 Issue Graph 可视化
+* Verifier 至少能真实跑到 L2 / L3 / L4 骨架
+* 零问题样本、正常修复样本、重试样本都还能稳定收口
+
+---
+
+# 新 Day 7：能力量化与训练日
+
+## 主题：LLM 接入 + Benchmark + Failure Taxonomy + Skills/Tool Calling + SWIFT/VERL + 最终前端打磨
+
+### Day 7 的总目标
+
+Day7 不再是“补点 UI + 录视频”。
+要改成：**把这个 Agent 变成可训练、可评测、可展示、可持续迭代的系统。**
+
+README 里对 Benchmark / Failure Taxonomy / 混合扫描引擎 / SWIFT/LoRA 已经给了方向；你额外要求的 VERL、tool calling 召回率、训练集/验证集/测试集评测，就统一放在 Day7。([GitHub][2])
+
+---
+
+## 7.1 真正把 LLM 接进主链路
+
+### 目标
+
+README 明确要求“AST + 确定性分析器 + LLM 协同”，但当前主链路更像规则 + case memory + fallback，还不够“LLM 中枢化”。Day7 必须补真模型接入。([GitHub][2])
+
+### 要做的事
+
+* 新增 `llm/clients.py`
+
+  * OpenAI / Qwen / DeepSeek adapter
+* 新增 `prompts/planner_prompt.py / fixer_prompt.py / verifier_reflect_prompt.py`
+* Planner 支持两种模式：
+
+  * deterministic only
+  * deterministic + llm_assist
+* Fixer 支持三层：
+
+  * case adapt
+  * template
+  * llm generation
+* Retry 时必须带上：
+
+  * failed_stage
+  * stderr_summary
+  * previous_patch
+  * selected_context
+* 所有 LLM 调用必须产出：
+
+  * token_in
+  * token_out
+  * latency_ms
+  * prompt_name
+  * model_name
+
+### 验收
+
+* 可切换开启/关闭 LLM
+* 至少一条 case 在开启 LLM 后 patch 更优
+* 前端能显示每轮模型调用 token
+
+---
+
+## 7.2 训练与微调：SWIFT + VERL 双轨
+
+### 目标
+
+你要的不是“调用 API”，而是要能做迁移学习微调。README 已经写了 SWIFT/LoRA；你额外要求 VERL，那 Day7 必须补成训练平台。([GitHub][2])
+
+### 要做的事
+
+#### A. SWIFT/SFT 训练轨
+
+* 训练数据来源：
+
+  * 历史结构化案例
+  * verified patch
+  * replay 的 planner/fixer trace
+* 数据格式：
+
+  * `instruction`
+  * `input_context`
+  * `expected_patch`
+  * `expected_verification`
+* 目录：
+
+  * `training/swift/data/train.jsonl`
+  * `training/swift/data/val.jsonl`
+  * `training/swift/data/test.jsonl`
+* 提供：
+
+  * `train_swift.sh`
+  * `eval_swift.sh`
+
+#### B. VERL / tool-aware 训练轨
+
+* 把 tool trace 变成训练样本：
+
+  * 哪一步调用了 analyzer
+  * 哪一步拉了 file fragment
+  * 哪一步运行 verifier
+* 指标：
+
+  * tool choice accuracy
+  * tool argument accuracy
+  * tool calling recall
+* 提供：
+
+  * `training/verl/config/*.yaml`
+  * `training/verl/run_verl.sh`
+
+### 验收
+
+* 至少跑通一次 smoke finetune
+* 至少产出一份 eval 报告
+* 即使不要求当日训出强模型，也必须把“能训、能评、能复现实验”的平台搭起来
+
+---
+
+## 7.3 Benchmark + Failure Taxonomy + 训练/验证/测试评测
+
+### 目标
+
+这块要直接对应你的第 6 条和第 8 条：量化模型能力、量化 tool calling 召回率，而不是只看“通不通”。README 也明确要求 Golden Dataset、Failure Taxonomy 和分阶段指标。([GitHub][2])
+
+### 要做的事
+
+* 新增：
+
+  * `benchmark/golden_cases/`
+  * `benchmark/splits/train.json`
+  * `benchmark/splits/val.json`
+  * `benchmark/splits/test.json`
+
+* `run_eval.py` 输出：
+
+  * detection precision / recall
+  * issue_graph quality
+  * repair_plan quality
+  * patch generation rate
+  * patch apply rate
+  * L1/L2/L3/L4 pass rate
+  * final verified patch rate
+  * retry avg
+  * latency avg
+  * token cost
+  * tool calling recall / precision
+
+* `failure_taxonomy.py`
+
+  * F1 detection miss
+  * F2 wrong patch
+  * F3 compile error
+  * F4 lint fail
+  * F5 test fail
+  * F6 security rescan fail
+  * F7 context insufficient
+  * F8 wrong tool selection
+
+* 指标额外补：
+
+  * F2 score
+  * per-bug-type confusion
+  * per-stage success funnel
+
+### 验收
+
+* 能一键跑评测
+* 能输出 train / val / test 三份报告
+* 能区分模型问题、工具问题、上下文问题、验证问题
+
+---
+
+## 7.4 Skills / Tooling 能力与召回率
+
+### 目标
+
+你明确要求要有 skills 能力，并量化 tool calling 召回率。Day7 必须把这一层从“散落的工具函数”变成“可观测工具系统”。
+
+### 要做的事
+
+* 统一工具注册表：
+
+  * `sandbox_run`
+  * `file_read`
+  * `symbol_lookup`
+  * `patch_apply`
+  * `compile_java`
+  * `lint_java`
+  * `run_tests`
+  * `security_rescan`
+* 每次 tool call 记录：
+
+  * tool_name
+  * args
+  * success
+  * latency
+  * selected_by
+  * expected_tool
+* 新增 `tool_eval.py`
+
+  * tool recall
+  * tool precision
+  * wrong-tool rate
+  * arg error rate
+
+### 验收
+
+* 任一 patch 修复样本都能导出 tool trace
+* Benchmark 报告里必须出现 tool calling recall
+
+---
+
+## 7.5 前端最终态
+
+### 目标
+
+你第 10 条说得很明确：前端要“完美展现数据，实现交互，左侧能展示历史记录”。现在你愿意先不继续纠结 UI，但 Day7 必须收成真正的产品态。
+
+### 要做的事
+
+* 左栏：
+
+  * 真实历史任务列表
+  * 支持回看
+* 中栏：
+
+  * 聊天式交互保留
+  * 可切换 snippet / repo / PR 模式
+* 右栏：
+
+  * 可读阶段过程
+  * Debug 下看 payload
+* 新增标签页：
+
+  * `Patch Diff`
+  * `Issue Graph`
+  * `Verification`
+  * `Memory`
+  * `Tool Trace`
+  * `Benchmark`
+* 实时展示：
+
+  * token 使用
+  * 模型名称
+  * 当前 context 来源
+  * verified level
+  * failure taxonomy bucket
+
+### 验收
+
+* 左栏历史可回看
+* 中栏可做聊天式提交
+* 右栏能切不同详情
+* 至少能在 UI 看到：
+
+  * Issue Graph 图
+  * Patch Diff
+  * L1-L4
+  * token
+  * tool trace
+
+---
+
+## 7.6 新的 Day 7 验收标准
+
+Day 7 结束时，必须满足你 11 条诉求里的“未实现部分”：
+
+* 有真实 LLM 接入，不再只是规则/模板
+* 有 SWIFT + VERL 训练/eval 脚本
+* 有 train/val/test 评测
+* 有 tool calling recall
+* 有 failure taxonomy 和 F2 等指标
+* 有真实的 repo-aware / PR-aware / MCP + Lazy Context
+* 有 token 与 context 可视化
+* 有 Issue Graph 可视化
+* 有历史任务 UI
+* 有 LangGraph
+
+---
