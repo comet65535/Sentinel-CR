@@ -1,0 +1,9 @@
+{
+  "title": "阿里巴巴 Java 开发手册",
+  "source": "local-file",
+  "language": "zh-CN",
+  "domain": "java_standards",
+  "ingest_priority": "high",
+  "path": "knowledge/raw/standards/alibaba-java-manual/阿里巴巴java开发手册.pdf",
+  "notes": "本地规范 PDF。抽取失败页面需标记 needs_ocr=true，不可伪造文本。"
+}

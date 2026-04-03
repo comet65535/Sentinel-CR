@@ -1,5 +1,7 @@
 """Execution tools for patch apply and verification stages."""
 
+from .export_training_data import export_training_data
+from .knowledge_ingest import run_knowledge_ingest
 from .lint_runner import run_lint_stage
 from .patch_apply import apply_patch_to_snippet
 from .security_rescan import run_security_rescan_stage
@@ -11,7 +13,9 @@ __all__ = [
     "apply_patch_to_snippet",
     "build_unified_diff_from_repaired_code",
     "compile_java_snippet",
+    "export_training_data",
     "propose_syntax_repair_candidates",
+    "run_knowledge_ingest",
     "run_lint_stage",
     "run_test_stage",
     "run_security_rescan_stage",

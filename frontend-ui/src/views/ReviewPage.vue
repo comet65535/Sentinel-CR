@@ -200,6 +200,7 @@ async function submitReview() {
       sourceType: 'snippet',
       options: {
         enable_verifier: true,
+        enable_mcp: false,
         max_retries: 2,
         enable_security_rescan: false,
         debug: debugMode.value,

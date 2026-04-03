@@ -1,0 +1,9 @@
+{
+  "mode": "json_fallback",
+  "collections": [
+    "standards_knowledge",
+    "repair_cases"
+  ],
+  "embedding_provider": "local",
+  "embedding_model": "BAAI/bge-small-en-v1.5"
+}

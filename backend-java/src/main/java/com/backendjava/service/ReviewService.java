@@ -125,7 +125,7 @@ public class ReviewService {
         if (status == ReviewTaskStatus.RUNNING) {
             task.updateStatus(ReviewTaskStatus.RUNNING);
         } else if (status == ReviewTaskStatus.COMPLETED) {
-            task.markCompleted(engineEvent.payload());
+            task.markCompleted(extractPersistedResult(engineEvent.payload()));
         } else if (status == ReviewTaskStatus.FAILED) {
             task.markFailed(engineEvent.message());
         }
@@ -185,6 +185,18 @@ public class ReviewService {
             return "python_unreachable";
         }
         return "engine_error";
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> extractPersistedResult(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            return Map.of();
+        }
+        Object resultCandidate = payload.get("result");
+        if (resultCandidate instanceof Map<?, ?> resultMap) {
+            return (Map<String, Object>) resultMap;
+        }
+        return payload;
     }
 
     private String generateTaskId() {

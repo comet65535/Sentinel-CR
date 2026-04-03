@@ -1,0 +1,2 @@
+class UserService { String safeName(User user) { return user.profile.name; } }
+

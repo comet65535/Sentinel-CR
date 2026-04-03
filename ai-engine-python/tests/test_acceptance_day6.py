@@ -264,3 +264,29 @@ class snippet {
     assert "summary" in result
     assert "verification" in result
     assert "memory" in result
+
+
+def test_day7_result_contract_fields_are_stable() -> None:
+    events = _run_review(
+        """
+class snippet {
+    int plus(int a, int b) {
+        return a + b;
+    }
+}
+""".strip(),
+        task_id="rev_day7_contract_fields",
+        options={"enable_verifier": False, "context_policy": "lazy", "context_budget_tokens": 12000},
+    )
+    result = events[-1]["payload"]["result"]
+    summary = result["summary"]
+
+    assert "failure_taxonomy" in summary
+    assert set(summary["failure_taxonomy"].keys()) == {"bucket", "code", "explanation"}
+    assert "analyzer" in result
+    assert "analyzer_evidence" in result
+    assert "context_budget" in result
+    assert "selected_context" in result
+    assert "tool_trace" in result
+    assert "llm_trace" in result
+    assert "repo_profile" in result

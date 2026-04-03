@@ -1,0 +1,2 @@
+class Greeter { String greet(boolean formal) { String prefix; if (formal) { prefix = "Dear"; } return prefix + " user"; } }
+

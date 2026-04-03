@@ -6,7 +6,22 @@ from typing import Any
 
 
 def default_repo_profiles_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "repo_profiles"
+
+
+def legacy_repo_profiles_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "repo_profiles"
+
+
+def _candidate_profile_dirs(profiles_dir: str | Path | None = None) -> list[Path]:
+    if profiles_dir:
+        return [Path(profiles_dir)]
+    candidates = [default_repo_profiles_dir(), legacy_repo_profiles_dir()]
+    unique: list[Path] = []
+    for item in candidates:
+        if item not in unique:
+            unique.append(item)
+    return unique
 
 
 def load_repo_profile(
@@ -15,27 +30,27 @@ def load_repo_profile(
     repo_id: str | None = None,
     profiles_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    base_dir = Path(profiles_dir) if profiles_dir else default_repo_profiles_dir()
-    if not base_dir.exists():
-        return {}
-
-    candidates: list[Path] = []
-    if repo_profile_id:
-        candidates.append(base_dir / f"{repo_profile_id}.json")
-    if repo_id:
-        candidates.append(base_dir / f"{repo_id}.json")
-    if not candidates:
-        candidates.extend(sorted(base_dir.glob("*.json")))
-
-    for path in candidates:
-        if not path.exists():
+    for base_dir in _candidate_profile_dirs(profiles_dir):
+        if not base_dir.exists():
             continue
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if isinstance(parsed, dict):
-            return _normalize_profile(parsed)
+
+        candidates: list[Path] = []
+        if repo_profile_id:
+            candidates.append(base_dir / f"{repo_profile_id}.json")
+        if repo_id:
+            candidates.append(base_dir / f"{repo_id}.json")
+        if not candidates:
+            candidates.extend(sorted(base_dir.glob("*.json")))
+
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                parsed = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                return _normalize_profile(parsed)
     return {}
 
 

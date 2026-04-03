@@ -46,15 +46,20 @@ def _build_ops() -> EngineOps:
 
 
 async def run_day3_state_graph(request: InternalReviewRunRequest) -> AsyncIterator[PythonEngineEvent]:
+    async for event in run_review_state_graph(request):
+        yield event
+
+
+async def run_review_state_graph(request: InternalReviewRunRequest) -> AsyncIterator[PythonEngineEvent]:
     async for event in run_langgraph_state_graph(request, ops=_build_ops()):
         yield event
 
 
 async def run_day2_state_graph(request: InternalReviewRunRequest) -> AsyncIterator[PythonEngineEvent]:
-    async for event in run_day3_state_graph(request):
+    async for event in run_review_state_graph(request):
         yield event
 
 
 async def run_day1_state_graph(request: InternalReviewRunRequest) -> AsyncIterator[PythonEngineEvent]:
-    async for event in run_day3_state_graph(request):
+    async for event in run_review_state_graph(request):
         yield event

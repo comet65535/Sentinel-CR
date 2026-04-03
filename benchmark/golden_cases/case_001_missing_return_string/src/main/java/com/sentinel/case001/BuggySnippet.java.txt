@@ -1,0 +1,2 @@
+class GreetingPolicy { String resolve(int score) { if (score > 0) { return "ok"; } } }
+

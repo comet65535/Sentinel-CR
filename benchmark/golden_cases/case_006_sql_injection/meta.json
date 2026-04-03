@@ -1,0 +1,20 @@
+{
+    "expected_detection":  [
+                               "analyzer",
+                               "planner"
+                           ],
+    "entry_files":  [
+                        "src/main/java"
+                    ],
+    "test_command":  "mvn -q test",
+    "title":  "case_006_sql_injection",
+    "case_id":  "case_006_sql_injection",
+    "expected_verified_level_min":  "L3",
+    "language":  "java",
+    "difficulty":  "medium",
+    "expected_strategy":  "parameterized_query",
+    "build_command":  "mvn -q -DskipTests compile",
+    "notes":  "Golden case for Day7 dataset pipeline.",
+    "expected_failure_taxonomy_if_fail":  "F2_wrong_patch",
+    "bug_type":  "sql_injection_parameterized"
+}

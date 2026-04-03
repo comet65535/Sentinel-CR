@@ -1,0 +1,23 @@
+{
+  "source_id": "alibaba_java_manual_v1_local",
+  "title": "阿里巴巴 Java 开发手册",
+  "path": "G:\\Desktop\\Sentinel-CR\\knowledge\\raw\\standards\\alibaba-java-manual\\阿里巴巴java开发手册.pdf",
+  "kind": "pdf",
+  "language": "zh-CN",
+  "domain": "java_standards",
+  "chunk_strategy": "page_window",
+  "total_pages": 0,
+  "extracted_pages": 0,
+  "failed_pages": [
+    null
+  ],
+  "pages": [
+    {
+      "page_no": null,
+      "text": "",
+      "extracted": false,
+      "needs_ocr": true,
+      "error": "pdf_extract_unavailable: No module named 'pypdf'"
+    }
+  ]
+}

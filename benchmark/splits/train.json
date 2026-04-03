@@ -1,0 +1,8 @@
+{
+  "case_ids": [
+    "case_001_missing_return_string",
+    "case_004_simple_type_mismatch",
+    "case_006_sql_injection",
+    "case_008_resource_leak"
+  ]
+}

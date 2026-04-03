@@ -60,7 +60,7 @@ class PythonAiEngineAdapterTests {
                     "public class Demo {}",
                     "java",
                     "snippet",
-                    Map.of("enable_verifier", true, "max_retries", 2),
+                    Map.of("enable_verifier", true, "enable_mcp", true, "max_retries", 2),
                     Map.of("requested_by", "backend-java-test", "debug_mode", true));
 
             List<EngineEvent> events =
@@ -75,6 +75,7 @@ class PythonAiEngineAdapterTests {
 
             assertThat(capturedBody.get()).contains("\"options\"");
             assertThat(capturedBody.get()).contains("\"enable_verifier\":true");
+            assertThat(capturedBody.get()).contains("\"enable_mcp\":true");
             assertThat(capturedBody.get()).contains("\"max_retries\":2");
             assertThat(capturedBody.get()).contains("\"metadata\"");
             assertThat(capturedBody.get()).contains("\"requested_by\":\"backend-java-test\"");

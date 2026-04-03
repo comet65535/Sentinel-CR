@@ -1,0 +1,20 @@
+{
+    "expected_detection":  [
+                               "analyzer",
+                               "planner"
+                           ],
+    "entry_files":  [
+                        "src/main/java"
+                    ],
+    "test_command":  "mvn -q test",
+    "title":  "case_001_missing_return_string",
+    "case_id":  "case_001_missing_return_string",
+    "expected_verified_level_min":  "L1",
+    "language":  "java",
+    "difficulty":  "medium",
+    "expected_strategy":  "semantic_compile_fix",
+    "build_command":  "mvn -q -DskipTests compile",
+    "notes":  "Golden case for Day7 dataset pipeline.",
+    "expected_failure_taxonomy_if_fail":  "semantic_compile_error",
+    "bug_type":  "missing_return_string"
+}

@@ -14,6 +14,7 @@ def test_health_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "UP", "service": "ai-engine-python"}
+    assert app.version == "0.7.0-day7"
 
 
 def test_internal_review_run_returns_day3_ndjson_stream(monkeypatch) -> None:

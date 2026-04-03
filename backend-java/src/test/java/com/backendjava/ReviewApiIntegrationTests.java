@@ -63,6 +63,8 @@ class ReviewApiIntegrationTests {
         assertThat(events).extracting(ReviewEvent::eventType)
                 .containsExactly("task_created", "analysis_started", "analysis_completed", "review_completed");
         assertThat(events).extracting(ReviewEvent::sequence).containsExactly(1L, 2L, 3L, 4L);
+        Map<String, Object> reviewCompletedPayload = events.get(3).payload();
+        assertThat(reviewCompletedPayload).containsKey("result");
 
         ReviewTaskResponse taskResponse = webTestClient.get()
                 .uri("/api/reviews/{taskId}", createResponse.taskId())
@@ -75,6 +77,7 @@ class ReviewApiIntegrationTests {
 
         assertThat(taskResponse).isNotNull();
         assertThat(taskResponse.status()).isEqualTo(ReviewTaskStatus.COMPLETED);
+        assertThat(taskResponse.result()).isEqualTo(reviewCompletedPayload.get("result"));
     }
 
     @Test

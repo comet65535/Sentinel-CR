@@ -14,7 +14,9 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     repo_profile = dict(state.repo_profile or {})
     case_store_summary = dict(state.case_store_summary or {})
     context_budget = dict(state.context_budget or {})
+    selected_context = list(state.selected_context or [])
     tool_trace = list(state.tool_trace or [])
+    llm_trace = _extract_llm_trace(state.options)
 
     verification_result = _sanitize_verification(state.verification_result)
     verified_level = str((verification_result or {}).get("verified_level") or "L0")
@@ -22,6 +24,12 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     failed_stage = _resolve_failed_stage(state=state, verification_result=verification_result, final_outcome=final_outcome)
     failure_reason = _resolve_failure_reason(state=state, verification_result=verification_result, final_outcome=final_outcome)
     failure_detail = _resolve_failure_detail(state=state, verification_result=verification_result, final_outcome=final_outcome)
+    failure_taxonomy = _build_failure_taxonomy(
+        final_outcome=final_outcome,
+        failed_stage=failed_stage,
+        failure_reason=failure_reason,
+        failure_detail=failure_detail,
+    )
     retry_exhausted = bool(
         final_outcome == "failed_after_retries" and state.enable_verifier and state.retry_count >= state.max_retries
     )
@@ -50,6 +58,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "failed_stage": failed_stage,
         "failure_reason": failure_reason,
         "failure_detail": failure_detail,
+        "failure_taxonomy": failure_taxonomy,
         "retry_exhausted": retry_exhausted,
         "no_fix_needed": state.no_fix_needed,
         "user_message": user_message,
@@ -62,6 +71,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "analyzer_evidence": {
             "issues": state.issues,
             "symbols": state.symbols,
+            "contextSummary": state.context_summary,
             "context_summary": state.context_summary,
             "diagnostics": state.diagnostics,
         },
@@ -74,7 +84,10 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "planner_summary": state.planner_summary,
         "memory": {"matches": memory_matches},
         "context_budget": context_budget,
+        "selected_context": selected_context,
         "tool_trace": tool_trace,
+        "llm_trace": llm_trace,
+        "repo_profile": repo_profile,
         "patch": patch_block,
         "attempts": attempts,
         "verification": verification_result,
@@ -84,6 +97,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "short_term": short_term_memory,
         "repo_profile": repo_profile,
         "case_store": case_store_summary,
+        "case_store_summary": case_store_summary,
     }
 
     return {
@@ -103,7 +117,9 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "planner_summary": state.planner_summary,
         "memory": result_block["memory"],
         "context_budget": context_budget,
+        "selected_context": selected_context,
         "tool_trace": tool_trace,
+        "llm_trace": llm_trace,
         "patch": patch_block,
         "attempts": attempts,
         "verification": verification_result,
@@ -116,6 +132,8 @@ def _resolve_final_outcome(
     patch_artifact: dict[str, Any] | None,
     verification_result: dict[str, Any] | None,
 ) -> str:
+    if state.no_fix_needed:
+        return "no_fix_needed"
     if patch_artifact is None:
         return "failed_no_patch"
     if not state.enable_verifier:
@@ -348,6 +366,56 @@ def _build_user_message(
     if failure_detail:
         return f"Review did not complete successfully: {failure_detail}"
     return "Review did not complete successfully."
+
+
+def _build_failure_taxonomy(
+    *,
+    final_outcome: str,
+    failed_stage: str | None,
+    failure_reason: str | None,
+    failure_detail: str | None,
+) -> dict[str, Any]:
+    if final_outcome in {"verified_patch", "patch_generated_unverified", "no_fix_needed"}:
+        return {"bucket": "none", "code": None, "explanation": None}
+
+    normalized_stage = str(failed_stage or "").strip().lower()
+    normalized_reason = str(failure_reason or "").strip().lower()
+    normalized_detail = str(failure_detail or "").strip().lower()
+
+    if normalized_stage == "compile":
+        if "semantic" in normalized_reason or "incompatible" in normalized_detail or "cannot find symbol" in normalized_detail:
+            return {"bucket": "semantic_compile_error", "code": "semantic_compile_error", "explanation": failure_reason}
+        return {"bucket": "F3_compile_error", "code": "compile_failed", "explanation": failure_reason or failure_detail}
+    if normalized_stage == "lint":
+        return {"bucket": "F4_lint_fail", "code": "lint_failed", "explanation": failure_reason or failure_detail}
+    if normalized_stage == "test":
+        return {"bucket": "F5_test_fail", "code": "test_failed", "explanation": failure_reason or failure_detail}
+    if normalized_stage == "security_rescan":
+        return {
+            "bucket": "F6_security_rescan_fail",
+            "code": "security_rescan_failed",
+            "explanation": failure_reason or failure_detail,
+        }
+
+    if normalized_reason == "unsupported_syntax_repair":
+        return {"bucket": "F2_wrong_patch", "code": "unsupported_syntax_repair", "explanation": failure_detail}
+    if normalized_reason == "duplicate_patch_candidate":
+        return {"bucket": "F2_wrong_patch", "code": "duplicate_patch_candidate", "explanation": failure_detail}
+    if normalized_reason in {"no_repair_candidate", "syntax_repair_failed"}:
+        return {"bucket": "F2_wrong_patch", "code": normalized_reason, "explanation": failure_detail}
+
+    return {"bucket": "F7_context_insufficient", "code": failure_reason, "explanation": failure_detail}
+
+
+def _extract_llm_trace(options: dict[str, Any]) -> list[dict[str, Any]]:
+    trace = options.get("llm_trace")
+    if not isinstance(trace, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in trace:
+        if isinstance(item, dict):
+            normalized.append(dict(item))
+    return normalized
 
 
 def _has_syntax_issues(issues: list[dict[str, Any]]) -> bool:

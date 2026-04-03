@@ -1,0 +1,20 @@
+{
+    "expected_detection":  [
+                               "analyzer",
+                               "planner"
+                           ],
+    "entry_files":  [
+                        "src/main/java"
+                    ],
+    "test_command":  "mvn -q test",
+    "title":  "case_008_resource_leak",
+    "case_id":  "case_008_resource_leak",
+    "expected_verified_level_min":  "L3",
+    "language":  "java",
+    "difficulty":  "medium",
+    "expected_strategy":  "try_with_resources",
+    "build_command":  "mvn -q -DskipTests compile",
+    "notes":  "Golden case for Day7 dataset pipeline.",
+    "expected_failure_taxonomy_if_fail":  "F6_security_rescan_fail",
+    "bug_type":  "resource_leak_try_with_resources"
+}

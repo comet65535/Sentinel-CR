@@ -3,18 +3,56 @@
 import asyncio
 
 from core.schemas import InternalReviewRunRequest
-from core.state_graph import run_day2_state_graph, run_day3_state_graph
+from core.state_graph import run_day2_state_graph, run_day3_state_graph, run_review_state_graph
 
 
-def _run_graph(request: InternalReviewRunRequest, *, use_day2_alias: bool = False) -> list[dict]:
+def _run_graph(
+    request: InternalReviewRunRequest,
+    *,
+    use_day2_alias: bool = False,
+    use_review_entry: bool = False,
+) -> list[dict]:
     async def _collect() -> list[dict]:
         events = []
-        iterator = run_day2_state_graph(request) if use_day2_alias else run_day3_state_graph(request)
+        if use_review_entry:
+            iterator = run_review_state_graph(request)
+        elif use_day2_alias:
+            iterator = run_day2_state_graph(request)
+        else:
+            iterator = run_day3_state_graph(request)
         async for event in iterator:
             events.append(event.model_dump(by_alias=True))
         return events
 
     return asyncio.run(_collect())
+
+
+def test_state_graph_review_entrypoint_keeps_day3_alias_compatible(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [],
+            "summary": {
+                "issuesCount": 0,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+    request = InternalReviewRunRequest(
+        taskId="rev_state_graph_entry_alias",
+        codeText="class snippet { int plus(int a, int b){ return a + b; } }",
+        language="java",
+        sourceType="snippet",
+    )
+    events_via_review = _run_graph(request, use_review_entry=True)
+    events_via_day3 = _run_graph(request)
+
+    assert [item["eventType"] for item in events_via_review] == [item["eventType"] for item in events_via_day3]
+    assert events_via_review[-1]["eventType"] == "review_completed"
 
 
 def test_state_graph_emits_full_event_sequence(monkeypatch) -> None:

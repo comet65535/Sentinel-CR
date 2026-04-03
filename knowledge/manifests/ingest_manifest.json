@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {
+      "source_id": "alibaba_java_manual_v1_local",
+      "title": "阿里巴巴 Java 开发手册",
+      "path": "knowledge/raw/standards/alibaba-java-manual/阿里巴巴java开发手册.pdf",
+      "kind": "pdf",
+      "language": "zh-CN",
+      "domain": "java_standards",
+      "priority": "high",
+      "chunk_strategy": "page_window",
+      "enabled": true
+    }
+  ]
+}

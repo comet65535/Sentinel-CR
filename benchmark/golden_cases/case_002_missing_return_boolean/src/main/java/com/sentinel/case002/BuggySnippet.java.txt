@@ -1,0 +1,2 @@
+class FeatureGate { boolean enabled(String flag) { if (flag == null) { return false; } if (flag.startsWith("exp")) { return true; } } }
+

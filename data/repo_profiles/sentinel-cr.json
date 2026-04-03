@@ -1,0 +1,32 @@
+{
+  "repo_id": "sentinel-cr",
+  "style_preferences": [
+    "prefer_small_verified_patches",
+    "preserve_public_contracts",
+    "avoid_unnecessary_refactor"
+  ],
+  "common_issue_types": [
+    "missing_return_string",
+    "missing_return_boolean",
+    "missing_return_numeric",
+    "incomplete_return_paths",
+    "uninitialized_local",
+    "simple_type_mismatch",
+    "null_pointer_guard",
+    "sql_injection_parameterized"
+  ],
+  "common_failed_stages": [
+    "compile",
+    "test"
+  ],
+  "preferred_build_command": "mvn -q -DskipTests compile",
+  "preferred_test_command": "mvn -q test",
+  "rejected_patch_patterns": [
+    "broad_refactor",
+    "multi_feature_change"
+  ],
+  "hotspots": [
+    "src/main/java",
+    "src/test/java"
+  ]
+}

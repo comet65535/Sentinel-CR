@@ -1,0 +1,20 @@
+{
+    "expected_detection":  [
+                               "analyzer",
+                               "planner"
+                           ],
+    "entry_files":  [
+                        "src/main/java"
+                    ],
+    "test_command":  "mvn -q test",
+    "title":  "case_007_n_plus_one",
+    "case_id":  "case_007_n_plus_one",
+    "expected_verified_level_min":  "L3",
+    "language":  "java",
+    "difficulty":  "medium",
+    "expected_strategy":  "batch_query",
+    "build_command":  "mvn -q -DskipTests compile",
+    "notes":  "Golden case for Day7 dataset pipeline.",
+    "expected_failure_taxonomy_if_fail":  "F2_wrong_patch",
+    "bug_type":  "n_plus_one_batch_query"
+}
