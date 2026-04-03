@@ -2,6 +2,7 @@ package com.backendjava.task;
 
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.List;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -19,5 +20,9 @@ public class InMemoryTaskRepository {
 
     public boolean existsByTaskId(String taskId) {
         return tasks.containsKey(taskId);
+    }
+
+    public List<ReviewTask> findAll() {
+        return List.copyOf(tasks.values());
     }
 }

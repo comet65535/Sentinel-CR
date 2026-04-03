@@ -15,6 +15,14 @@ function asNumber(value: unknown): number {
 function asText(value: unknown, fallback = '-'): string {
   return typeof value === 'string' && value.trim() ? value : fallback
 }
+
+function sourceId(item: Record<string, unknown>): string {
+  return asText(item.id ?? item.path, '-')
+}
+
+function sourceTokens(item: Record<string, unknown>): number {
+  return asNumber(item.tokens ?? item.token_count)
+}
 </script>
 
 <template>
@@ -39,8 +47,8 @@ function asText(value: unknown, fallback = '-'): string {
         <ul v-else>
           <li v-for="(item, idx) in contextBudget.sources" :key="idx">
             {{ asText((item as Record<string, unknown>).kind) }} ·
-            {{ asText((item as Record<string, unknown>).path) }} ·
-            tokens={{ asNumber((item as Record<string, unknown>).token_count) }}
+            {{ sourceId(item as Record<string, unknown>) }} ·
+            tokens={{ sourceTokens(item as Record<string, unknown>) }}
           </li>
         </ul>
       </div>

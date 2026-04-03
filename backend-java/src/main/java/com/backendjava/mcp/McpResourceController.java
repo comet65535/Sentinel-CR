@@ -50,9 +50,14 @@ public class McpResourceController {
         return resourceService.testSummary(taskId);
     }
 
-    @PostMapping("/pr-diff/parse")
-    public McpEnvelope parsePrDiff(@RequestBody(required = false) Map<String, Object> body) {
+    @PostMapping("/pr-diff")
+    public McpEnvelope prDiff(@RequestBody(required = false) Map<String, Object> body) {
         Map<String, Object> safeBody = body == null ? Map.of() : body;
         return resourceService.parsePrDiff(String.valueOf(safeBody.getOrDefault("taskId", "")), safeBody);
+    }
+
+    @PostMapping("/pr-diff/parse")
+    public McpEnvelope parsePrDiffAlias(@RequestBody(required = false) Map<String, Object> body) {
+        return prDiff(body);
     }
 }

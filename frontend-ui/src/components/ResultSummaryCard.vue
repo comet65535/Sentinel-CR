@@ -67,7 +67,7 @@ const emit = defineEmits<{
       </details>
 
       <PatchDiffViewer
-        v-if="props.patchContent && props.stats.patchStatus === 'generated'"
+        v-if="props.patchContent"
         :patch-content="props.patchContent"
         @click.stop
       />

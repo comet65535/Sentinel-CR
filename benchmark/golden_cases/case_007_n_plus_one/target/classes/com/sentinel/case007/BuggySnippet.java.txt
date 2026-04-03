@@ -1,0 +1,2 @@
+class BatchLoader { int batchSize(java.util.List<Integer> ids) { int count = 0; for (Integer id : ids) { count += loadOne(id); } return count; } }
+

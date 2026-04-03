@@ -1,0 +1,19 @@
+{
+  "schema_version": "day7.eval.v1",
+  "generated_at": "2026-04-03T14:13:41.997655+00:00",
+  "ok": true,
+  "error": null,
+  "summary": {
+    "cases_total": 0,
+    "expected_total": 0,
+    "actual_total": 0,
+    "true_positive_total": 0,
+    "wrong_tool_calls": 0
+  },
+  "metrics": {
+    "tool_calling_recall": 0.0,
+    "tool_calling_precision": 0.0,
+    "wrong_tool_call_rate": 0.0
+  },
+  "cases": []
+}

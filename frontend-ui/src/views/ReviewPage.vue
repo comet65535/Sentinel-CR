@@ -1,11 +1,16 @@
-﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { createReviewEventSource, createReviewTask, fetchReviewTask } from '../api/review'
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  createReviewEventSource,
+  createReviewTask,
+  fetchReviewHistory,
+  fetchReviewTask,
+} from '../api/review'
 import ResultSummaryCard from '../components/ResultSummaryCard.vue'
 import ReviewForm from '../components/ReviewForm.vue'
 import ReviewSidebar from '../components/ReviewSidebar.vue'
 import StageDetailPanel from '../components/StageDetailPanel.vue'
-import type { ReviewEvent, ReviewTaskStatus } from '../types/review'
+import type { ReviewEvent, ReviewHistoryItem, ReviewTaskStatus } from '../types/review'
 import {
   SSE_EVENT_TYPES,
   buildConversationItems,
@@ -14,6 +19,11 @@ import {
   extractResultStats,
   toStatusText,
 } from '../utils/reviewEventView'
+import {
+  buildAccumulatedResult,
+  extractCompletedResult,
+  resolveResultByPriority,
+} from '../utils/reviewResult'
 
 const DEFAULT_SNIPPET = `class snippet {
     String greet(String name) {
@@ -29,6 +39,10 @@ const submittedCode = ref('')
 const taskId = ref('')
 const taskStatus = ref<'IDLE' | ReviewTaskStatus>('IDLE')
 const events = ref<ReviewEvent[]>([])
+const historyItems = ref<ReviewHistoryItem[]>([])
+const selectedHistoryTaskId = ref('')
+const loadingHistory = ref(false)
+const historyError = ref('')
 const submitting = ref(false)
 const errorMessage = ref('')
 const debugMode = ref(false)
@@ -38,16 +52,17 @@ let eventSource: EventSource | null = null
 
 const sortedEvents = computed(() => [...events.value].sort((left, right) => left.sequence - right.sequence))
 
-const reviewResult = computed<Record<string, unknown> | null>(() => {
-  const completed = [...sortedEvents.value]
-    .reverse()
-    .find((event) => event.eventType === 'review_completed')
-  if (!completed) return null
-  if (completed.payload && typeof completed.payload.result === 'object' && completed.payload.result !== null) {
-    return completed.payload.result as Record<string, unknown>
-  }
-  return completed.payload as Record<string, unknown>
-})
+const completedResult = computed<Record<string, unknown> | null>(() =>
+  extractCompletedResult(sortedEvents.value)
+)
+
+const accumulatedResult = computed<Record<string, unknown> | null>(() =>
+  buildAccumulatedResult(sortedEvents.value)
+)
+
+const reviewResult = computed<Record<string, unknown> | null>(() =>
+  resolveResultByPriority(sortedEvents.value)
+)
 
 const currentStatusLine = computed(() =>
   buildReadableCurrentStatus(sortedEvents.value, reviewResult.value)
@@ -93,10 +108,47 @@ const patchContent = computed(() => {
     return ''
   }
   const patch = reviewResult.value.patch
-  if (typeof patch === 'object' && patch !== null && typeof (patch as Record<string, unknown>).content === 'string') {
-    return String((patch as Record<string, unknown>).content)
+  if (typeof patch !== 'object' || patch === null) {
+    return ''
+  }
+  const patchRecord = patch as Record<string, unknown>
+  if (typeof patchRecord.unified_diff === 'string' && patchRecord.unified_diff.trim()) {
+    return patchRecord.unified_diff
+  }
+  if (typeof patchRecord.content === 'string' && patchRecord.content.trim()) {
+    return patchRecord.content
   }
   return ''
+})
+
+const liveMetrics = computed(() => {
+  const summary =
+    reviewResult.value && typeof reviewResult.value.summary === 'object'
+      ? (reviewResult.value.summary as Record<string, unknown>)
+      : {}
+  const taxonomy =
+    summary.failure_taxonomy && typeof summary.failure_taxonomy === 'object'
+      ? (summary.failure_taxonomy as Record<string, unknown>)
+      : {}
+  const context =
+    reviewResult.value && typeof reviewResult.value.context_budget === 'object'
+      ? (reviewResult.value.context_budget as Record<string, unknown>)
+      : {}
+  const toolTrace =
+    reviewResult.value && Array.isArray(reviewResult.value.tool_trace)
+      ? reviewResult.value.tool_trace
+      : []
+  const llmTrace =
+    reviewResult.value && Array.isArray(reviewResult.value.llm_trace)
+      ? reviewResult.value.llm_trace
+      : []
+  return {
+    verifiedLevel: String(summary.verified_level ?? 'L0'),
+    failureBucket: String(taxonomy.bucket ?? 'none'),
+    contextUsed: Number(context.used_tokens ?? 0),
+    toolTraceCount: toolTrace.length,
+    llmTraceCount: llmTrace.length,
+  }
 })
 
 const isProcessing = computed(() => {
@@ -128,6 +180,7 @@ function upsertEvent(event: ReviewEvent) {
 
   if (isTaskFinished(event.status)) {
     closeEventSource()
+    void loadHistory()
   }
 }
 
@@ -169,12 +222,67 @@ function subscribeEventStream(nextTaskId: string) {
       taskStatus.value = latestTask.status
       if (isTaskFinished(latestTask.status)) {
         closeEventSource()
+        if (!sortedEvents.value.some((item) => item.eventType === 'review_completed')) {
+          events.value.push({
+            taskId: nextTaskId,
+            eventType: 'review_completed',
+            message: '任务结束（通过详情查询补全结果）',
+            timestamp: new Date().toISOString(),
+            sequence: sortedEvents.value.length + 1,
+            status: latestTask.status,
+            payload: { result: (latestTask.result as Record<string, unknown>) ?? {} },
+          })
+        }
       } else {
         errorMessage.value = '事件流连接中断。'
       }
     } catch {
       errorMessage.value = '事件流出错，且任务状态查询失败。'
     }
+  }
+}
+
+async function loadHistory() {
+  loadingHistory.value = true
+  historyError.value = ''
+  try {
+    historyItems.value = await fetchReviewHistory(60)
+  } catch (error) {
+    historyError.value = error instanceof Error ? error.message : '历史任务加载失败。'
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+async function openHistoryTask(historyTaskId: string) {
+  closeEventSource()
+  errorMessage.value = ''
+  detailPanelOpen.value = false
+  selectedHistoryTaskId.value = historyTaskId
+  events.value = []
+  taskId.value = historyTaskId
+
+  const historyItem = historyItems.value.find((item) => item.task_id === historyTaskId)
+  if (historyItem) {
+    taskStatus.value = historyItem.status
+  }
+
+  try {
+    const detail = await fetchReviewTask(historyTaskId)
+    taskStatus.value = detail.status
+    events.value = [
+      {
+        taskId: historyTaskId,
+        eventType: 'review_completed',
+        message: '历史任务结果',
+        timestamp: new Date().toISOString(),
+        sequence: 1,
+        status: detail.status,
+        payload: { result: (detail.result as Record<string, unknown>) ?? {} },
+      },
+    ]
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '历史任务详情加载失败。'
   }
 }
 
@@ -191,6 +299,7 @@ async function submitReview() {
   taskStatus.value = 'IDLE'
   detailPanelOpen.value = false
   submittedCode.value = code.value
+  selectedHistoryTaskId.value = ''
   closeEventSource()
 
   try {
@@ -215,7 +324,9 @@ async function submitReview() {
     })
     taskId.value = response.taskId
     taskStatus.value = response.status
+    selectedHistoryTaskId.value = response.taskId
     subscribeEventStream(response.taskId)
+    await loadHistory()
   } catch (error) {
     if (error instanceof Error) {
       errorMessage.value = error.message
@@ -243,7 +354,12 @@ function startNewAnalysis() {
   errorMessage.value = ''
   detailPanelOpen.value = false
   submittedCode.value = ''
+  selectedHistoryTaskId.value = ''
 }
+
+onMounted(() => {
+  void loadHistory()
+})
 
 onBeforeUnmount(() => {
   closeEventSource()
@@ -252,7 +368,16 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="layout">
-    <ReviewSidebar :task-id="taskId" :task-status="taskStatus" @new-analysis="startNewAnalysis" />
+    <ReviewSidebar
+      :task-id="taskId"
+      :task-status="taskStatus"
+      :history-items="historyItems"
+      :selected-history-task-id="selectedHistoryTaskId"
+      :loading-history="loadingHistory"
+      :history-error="historyError"
+      @new-analysis="startNewAnalysis"
+      @select-history="openHistoryTask"
+    />
 
     <section class="chat-column">
       <header class="chat-header">
@@ -271,6 +396,14 @@ onBeforeUnmount(() => {
             <input v-model="debugMode" type="checkbox" />
             <span>Debug</span>
           </label>
+        </div>
+
+        <div class="metric-row">
+          <span class="metric-chip">verified: {{ liveMetrics.verifiedLevel }}</span>
+          <span class="metric-chip">failure: {{ liveMetrics.failureBucket }}</span>
+          <span class="metric-chip">context used: {{ liveMetrics.contextUsed }}</span>
+          <span class="metric-chip">tool trace: {{ liveMetrics.toolTraceCount }}</span>
+          <span class="metric-chip">llm trace: {{ liveMetrics.llmTraceCount }}</span>
         </div>
       </header>
 
@@ -401,6 +534,21 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
   color: #4e677b;
   font-size: 0.84rem;
+}
+
+.metric-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.metric-chip {
+  border: 1px solid #d4dfef;
+  background: #f4f8ff;
+  border-radius: 999px;
+  padding: 0.2rem 0.52rem;
+  color: #42627a;
+  font-size: 0.76rem;
 }
 
 .chat-thread {

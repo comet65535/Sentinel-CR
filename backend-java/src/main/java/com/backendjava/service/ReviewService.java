@@ -2,6 +2,7 @@ package com.backendjava.service;
 
 import com.backendjava.api.dto.CreateReviewRequest;
 import com.backendjava.api.dto.CreateReviewResponse;
+import com.backendjava.api.dto.ReviewHistoryItemResponse;
 import com.backendjava.api.dto.ReviewTaskResponse;
 import com.backendjava.engine.AiEngineAdapter;
 import com.backendjava.engine.EngineEvent;
@@ -14,6 +15,8 @@ import com.backendjava.task.ReviewTaskStatus;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -82,6 +85,15 @@ public class ReviewService {
                 task.getUpdatedAt(),
                 task.getResult(),
                 task.getErrorMessage());
+    }
+
+    public List<ReviewHistoryItemResponse> listReviewTasks(int limit) {
+        int cappedLimit = Math.max(1, Math.min(limit, 500));
+        return taskRepository.findAll().stream()
+                .sorted(Comparator.comparing(ReviewTask::getUpdatedAt).reversed())
+                .limit(cappedLimit)
+                .map(this::toHistoryItem)
+                .toList();
     }
 
     public Flux<ReviewEvent> streamTaskEvents(String taskId) {
@@ -203,5 +215,65 @@ public class ReviewService {
         String timestamp = TASK_ID_DATE_FORMATTER.format(Instant.now());
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 6);
         return "rev_" + timestamp + "_" + suffix;
+    }
+
+    @SuppressWarnings("unchecked")
+    private ReviewHistoryItemResponse toHistoryItem(ReviewTask task) {
+        Map<String, Object> result = task.getResult() == null ? Map.of() : task.getResult();
+        Map<String, Object> summary = asMap(result.get("summary"));
+        Map<String, Object> failureTaxonomy = asMap(summary.get("failure_taxonomy"));
+        Map<String, Object> patch = asMap(result.get("patch"));
+
+        String finalStatus = asText(summary.get("final_outcome"), task.getStatus().name().toLowerCase());
+        String verifiedLevel = asText(summary.get("verified_level"), "L0");
+        String bucket = asText(failureTaxonomy.get("bucket"), "none");
+
+        String title = deriveTitle(task.getCodeText());
+        boolean hasPatch = !asText(patch.get("unified_diff"), "").isBlank() || !asText(patch.get("content"), "").isBlank();
+
+        return new ReviewHistoryItemResponse(
+                task.getTaskId(),
+                task.getStatus().name(),
+                task.getCreatedAt(),
+                task.getUpdatedAt(),
+                title,
+                asText(task.getSourceType(), "snippet"),
+                new ReviewHistoryItemResponse.ReviewHistorySummary(
+                        finalStatus,
+                        verifiedLevel,
+                        new ReviewHistoryItemResponse.ReviewHistoryFailureTaxonomy(bucket)),
+                hasPatch);
+    }
+
+    private String deriveTitle(String codeText) {
+        if (codeText == null || codeText.isBlank()) {
+            return "Untitled Review";
+        }
+        String[] lines = codeText.split("\\R");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!trimmed.isBlank()) {
+                if (trimmed.length() <= 80) {
+                    return trimmed;
+                }
+                return trimmed.substring(0, 77) + "...";
+            }
+        }
+        return "Untitled Review";
+    }
+
+    private String asText(Object value, String fallback) {
+        if (value instanceof String text && !text.isBlank()) {
+            return text;
+        }
+        return fallback;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> asMap(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        return Map.of();
     }
 }

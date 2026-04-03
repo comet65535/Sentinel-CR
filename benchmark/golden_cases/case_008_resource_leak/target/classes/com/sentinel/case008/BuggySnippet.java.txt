@@ -1,0 +1,2 @@
+class FileByteReader { int firstByte(java.nio.file.Path path) throws java.io.IOException { java.io.InputStream in = java.nio.file.Files.newInputStream(path); return in.read(); } }
+

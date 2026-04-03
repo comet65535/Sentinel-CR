@@ -56,3 +56,52 @@ def test_run_knowledge_ingest_writes_processed_and_chunks(monkeypatch, tmp_path:
     assert report.standards_chunks >= 1
     assert report.chroma_collections == ["standards_knowledge", "repair_cases"]
     assert (tmp_path / "chunks" / "standards_knowledge.jsonl").exists()
+
+
+def test_run_knowledge_ingest_does_not_fabricate_pdf_text(monkeypatch, tmp_path: Path) -> None:
+    manifest = {
+        "sources": [
+            {
+                "source_id": "empty_pdf",
+                "title": "Empty PDF",
+                "path": "knowledge/raw/standards/empty.pdf",
+                "kind": "pdf",
+                "enabled": True,
+            }
+        ]
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(
+        knowledge_ingest,
+        "_ingest_pdf_source",
+        lambda source, source_path, processed_root, warnings: {
+            "source_id": source["source_id"],
+            "path": str(source_path),
+            "pages": [
+                {"page_no": 1, "text": "", "extracted": False, "needs_ocr": True},
+                {"page_no": 2, "text": "", "extracted": False, "needs_ocr": True},
+            ],
+            "failed_pages": [1, 2],
+            "extracted_pages": 0,
+            "total_pages": 2,
+        },
+    )
+    monkeypatch.setattr(knowledge_ingest, "load_cases", lambda: [])
+    monkeypatch.setattr(
+        knowledge_ingest,
+        "_persist_to_chroma",
+        lambda **kwargs: {"mode": "json_fallback", "collections": ["standards_knowledge", "repair_cases"]},
+    )
+
+    report = knowledge_ingest.run_knowledge_ingest(
+        manifest_path=manifest_path,
+        persist_dir=tmp_path / "storage",
+        processed_dir=tmp_path / "processed",
+        chunks_dir=tmp_path / "chunks",
+    )
+
+    assert report.standards_chunks == 0
+    standards_content = (tmp_path / "chunks" / "standards_knowledge.jsonl").read_text(encoding="utf-8").strip()
+    assert standards_content == ""

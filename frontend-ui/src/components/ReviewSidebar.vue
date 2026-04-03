@@ -1,27 +1,31 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue'
-import type { ReviewTaskStatus } from '../types/review'
+import type { ReviewHistoryItem, ReviewTaskStatus } from '../types/review'
 import { toStatusText } from '../utils/reviewEventView'
 
 const props = defineProps<{
   taskId: string
   taskStatus: 'IDLE' | ReviewTaskStatus
+  historyItems: ReviewHistoryItem[]
+  selectedHistoryTaskId: string
+  loadingHistory: boolean
+  historyError: string
 }>()
 
 const emit = defineEmits<{
   (event: 'new-analysis'): void
+  (event: 'select-history', taskId: string): void
 }>()
-
-const placeholderHistory = [
-  { id: 'h1', title: '空指针修复演练', subtitle: '今天' },
-  { id: 'h2', title: 'SQL 参数化检查', subtitle: '昨天' },
-  { id: 'h3', title: '编译失败重试样例', subtitle: '更早' },
-]
 
 const taskLabel = computed(() => {
   if (!props.taskId) return '当前暂无任务'
   return `${props.taskId} · ${toStatusText(props.taskStatus)}`
 })
+
+function formatSubtitle(item: ReviewHistoryItem): string {
+  const time = item.updated_at?.replace('T', ' ').slice(0, 16) || '-'
+  return `${item.summary.verified_level} · ${item.summary.failure_taxonomy.bucket} · ${time}`
+}
 </script>
 
 <template>
@@ -30,9 +34,19 @@ const taskLabel = computed(() => {
 
     <div class="section">
       <p class="section-title">历史会话</p>
-      <button v-for="item in placeholderHistory" :key="item.id" class="history-item" type="button">
-        <span class="history-title">{{ item.title }}</span>
-        <span class="history-subtitle">{{ item.subtitle }}</span>
+      <p v-if="loadingHistory" class="empty-note">正在加载历史任务...</p>
+      <p v-else-if="historyError" class="error-note">{{ historyError }}</p>
+      <p v-else-if="historyItems.length === 0" class="empty-note">暂无历史任务。</p>
+      <button
+        v-for="item in historyItems"
+        :key="item.task_id"
+        class="history-item"
+        :class="{ active: selectedHistoryTaskId === item.task_id }"
+        type="button"
+        @click="emit('select-history', item.task_id)"
+      >
+        <span class="history-title">{{ item.title || item.task_id }}</span>
+        <span class="history-subtitle">{{ formatSubtitle(item) }}</span>
       </button>
     </div>
 
@@ -100,14 +114,33 @@ const taskLabel = computed(() => {
   border-color: #d4e1f1;
 }
 
+.history-item.active {
+  background: #deeeff;
+  border-color: #8fb7de;
+}
+
 .history-title {
   color: #213f53;
   font-size: 0.88rem;
+  line-break: anywhere;
 }
 
 .history-subtitle {
   color: #72879c;
   font-size: 0.76rem;
+  line-break: anywhere;
+}
+
+.empty-note {
+  margin: 0;
+  color: #6e8294;
+  font-size: 0.82rem;
+}
+
+.error-note {
+  margin: 0;
+  color: #a04848;
+  font-size: 0.82rem;
 }
 
 .current {

@@ -66,10 +66,12 @@ def run_knowledge_ingest(
             warnings.append(f"unsupported source kind: {kind}")
 
     standards_chunk_file = chunks_root / "standards_knowledge.jsonl"
+    standards_chunks = _dedupe_chunks(standards_chunks)
     _write_jsonl(standards_chunk_file, standards_chunks)
 
     repair_cases = load_cases()
     repair_chunks = _build_repair_case_chunks(repair_cases)
+    repair_chunks = _dedupe_chunks(repair_chunks)
     repair_chunk_file = chunks_root / "repair_cases.jsonl"
     _write_jsonl(repair_chunk_file, repair_chunks)
 
@@ -191,29 +193,6 @@ def _build_chunks_from_processed(processed: dict[str, Any], *, source: dict[str,
                     },
                 }
             )
-    if chunks:
-        return chunks
-
-    failed_pages = processed.get("failed_pages", [])
-    diag_text = (
-        f"Extraction diagnostic for {source.get('title')}: extracted_pages={processed.get('extracted_pages', 0)}, "
-        f"failed_pages={failed_pages}, needs_ocr={True}."
-    )
-    chunks.append(
-        {
-            "chunk_id": f"{source_id}-diagnostic-0001",
-            "text": diag_text,
-            "metadata": {
-                "source_id": source_id,
-                "title": source.get("title"),
-                "path": processed.get("path"),
-                "kind": source.get("kind"),
-                "language": source.get("language"),
-                "domain": source.get("domain"),
-                "diagnostic": True,
-            },
-        }
-    )
     return chunks
 
 
@@ -358,6 +337,20 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as fp:
         for item in rows:
             fp.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def _dedupe_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        chunk_id = str(chunk.get("chunk_id") or "").strip()
+        if not chunk_id:
+            continue
+        if chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        deduped.append(chunk)
+    return deduped
 
 
 def _chunk_text(text: str, *, chunk_size: int, overlap: int) -> list[str]:

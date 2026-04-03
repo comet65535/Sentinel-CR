@@ -18,6 +18,12 @@ interface GraphEdge {
   edge_type?: string
 }
 
+interface PositionedNode extends GraphNode {
+  id: string
+  x: number
+  y: number
+}
+
 const props = defineProps<{
   issueGraph: Record<string, unknown> | null
 }>()
@@ -26,7 +32,8 @@ const selectedIssueId = ref<string | null>(null)
 
 const nodes = computed(() => {
   const raw = props.issueGraph?.nodes
-  return Array.isArray(raw) ? (raw as GraphNode[]) : []
+  if (!Array.isArray(raw)) return []
+  return raw as GraphNode[]
 })
 
 const edges = computed(() => {
@@ -34,52 +41,80 @@ const edges = computed(() => {
   return Array.isArray(raw) ? (raw as GraphEdge[]) : []
 })
 
+const positionedNodes = computed<PositionedNode[]>(() => {
+  const size = nodes.value.length
+  if (size === 0) return []
+  const centerX = 240
+  const centerY = 140
+  const radius = Math.max(70, Math.min(120, 28 * size))
+  return nodes.value.map((node, index) => {
+    const angle = (2 * Math.PI * index) / size
+    const id = String(node.issue_id || `node-${index}`)
+    return {
+      ...node,
+      id,
+      x: centerX + radius * Math.cos(angle),
+      y: centerY + radius * Math.sin(angle),
+    }
+  })
+})
+
+const nodeMap = computed(() =>
+  Object.fromEntries(positionedNodes.value.map((node) => [node.id, node]))
+)
+
 const selectedNode = computed(() => {
   if (!selectedIssueId.value) return null
-  return nodes.value.find((node) => String(node.issue_id) === selectedIssueId.value) ?? null
+  return nodeMap.value[selectedIssueId.value] ?? null
 })
 
 function pickIssue(issueId: string | undefined) {
   if (!issueId) return
   selectedIssueId.value = issueId
 }
+
+function edgeKey(edge: GraphEdge, idx: number): string {
+  return `${edge.from_issue_id || 'from'}-${edge.to_issue_id || 'to'}-${idx}`
+}
 </script>
 
 <template>
   <section class="graph-panel">
-    <p v-if="nodes.length === 0" class="placeholder">暂无 Issue Graph 数据。</p>
+    <p v-if="positionedNodes.length === 0" class="placeholder">暂无 Issue Graph 数据。</p>
 
     <div v-else class="graph-layout">
       <div class="graph-canvas">
-        <button
-          v-for="node in nodes"
-          :key="String(node.issue_id)"
-          type="button"
-          class="node-chip"
-          :class="{ active: selectedIssueId === String(node.issue_id) }"
-          @click="pickIssue(String(node.issue_id))"
-        >
-          <strong>{{ node.issue_id }}</strong>
-          <span>{{ node.type }} · {{ node.severity }}</span>
-        </button>
+        <svg class="graph-svg" viewBox="0 0 480 280" role="img" aria-label="Issue Graph">
+          <line
+            v-for="(edge, idx) in edges"
+            :key="edgeKey(edge, idx)"
+            :x1="nodeMap[String(edge.from_issue_id)]?.x ?? 0"
+            :y1="nodeMap[String(edge.from_issue_id)]?.y ?? 0"
+            :x2="nodeMap[String(edge.to_issue_id)]?.x ?? 0"
+            :y2="nodeMap[String(edge.to_issue_id)]?.y ?? 0"
+            class="edge"
+          />
 
-        <ul class="edge-list">
-          <li v-for="(edge, idx) in edges" :key="idx">
-            {{ edge.from_issue_id }} → {{ edge.to_issue_id }} ({{ edge.edge_type }})
-          </li>
-        </ul>
+          <g
+            v-for="node in positionedNodes"
+            :key="node.id"
+            class="node"
+            :class="{ active: selectedIssueId === node.id }"
+            @click="pickIssue(node.id)"
+          >
+            <circle :cx="node.x" :cy="node.y" r="20" />
+            <text :x="node.x" :y="node.y + 4" text-anchor="middle">{{ node.id }}</text>
+          </g>
+        </svg>
       </div>
 
       <div class="detail">
-        <p v-if="!selectedNode" class="placeholder">点击左侧节点查看详情。</p>
+        <p v-if="!selectedNode" class="placeholder">点击图中的节点查看 Issue 详情。</p>
         <template v-else>
-          <h4>{{ selectedNode.issue_id }}</h4>
-          <p>Type: {{ selectedNode.type }}</p>
-          <p>Severity: {{ selectedNode.severity }}</p>
-          <p>
-            File:
-            {{ selectedNode.file_path || selectedNode.location?.file_path || '-' }}
-          </p>
+          <h4>{{ selectedNode.id }}</h4>
+          <p>Type: {{ selectedNode.type || '-' }}</p>
+          <p>Severity: {{ selectedNode.severity || '-' }}</p>
+          <p>File: {{ selectedNode.file_path || selectedNode.location?.file_path || '-' }}</p>
           <p>Strategy: {{ selectedNode.strategy_hint || '-' }}</p>
           <p>Fix Scope: {{ selectedNode.fix_scope || '-' }}</p>
           <p>Symbols: {{ (selectedNode.related_symbols || []).join(', ') || '-' }}</p>
@@ -97,7 +132,7 @@ function pickIssue(issueId: string | undefined) {
 
 .graph-layout {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: 1.2fr 1fr;
   gap: 0.7rem;
 }
 
@@ -109,33 +144,37 @@ function pickIssue(issueId: string | undefined) {
   padding: 0.6rem;
 }
 
-.node-chip {
-  border: 1px solid #cdd9ea;
-  border-radius: 999px;
-  background: #f2f7ff;
-  color: #204960;
-  display: inline-grid;
-  gap: 0.12rem;
-  padding: 0.36rem 0.6rem;
-  margin: 0 0.45rem 0.45rem 0;
+.graph-svg {
+  width: 100%;
+  height: 280px;
+  display: block;
+}
+
+.edge {
+  stroke: #9cb8d3;
+  stroke-width: 1.5;
+}
+
+.node {
   cursor: pointer;
-  text-align: left;
 }
 
-.node-chip.active {
-  border-color: #6d9fc4;
-  background: #deefff;
+.node circle {
+  fill: #dfeeff;
+  stroke: #6f9ec3;
+  stroke-width: 1.4;
 }
 
-.node-chip span {
-  font-size: 0.76rem;
+.node.active circle {
+  fill: #b6dbff;
+  stroke: #1f6799;
+  stroke-width: 2;
 }
 
-.edge-list {
-  margin: 0.2rem 0 0;
-  padding-left: 1rem;
-  color: #3b5e74;
-  font-size: 0.82rem;
+.node text {
+  font-size: 9px;
+  fill: #1f4259;
+  pointer-events: none;
 }
 
 .detail h4 {
@@ -157,6 +196,10 @@ function pickIssue(issueId: string | undefined) {
 @media (max-width: 900px) {
   .graph-layout {
     grid-template-columns: 1fr;
+  }
+
+  .graph-svg {
+    height: 240px;
   }
 }
 </style>

@@ -137,3 +137,20 @@ export interface ReviewEvent {
   status: ReviewTaskStatus
   payload: Record<string, unknown> & { result?: ReviewResult }
 }
+
+export interface ReviewHistoryItem {
+  task_id: string
+  status: ReviewTaskStatus
+  created_at: string
+  updated_at: string
+  title: string
+  input_kind: string
+  summary: {
+    final_status: string
+    verified_level: string
+    failure_taxonomy: {
+      bucket: string
+    }
+  }
+  has_patch: boolean
+}

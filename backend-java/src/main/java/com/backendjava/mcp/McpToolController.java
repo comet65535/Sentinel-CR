@@ -16,27 +16,27 @@ public class McpToolController {
     }
 
     @PostMapping("/resolve-symbol")
-    public McpEnvelope resolveSymbol(@RequestBody Map<String, Object> body) {
-        return toolService.resolveSymbol(body);
+    public McpEnvelope resolveSymbol(@RequestBody(required = false) Map<String, Object> body) {
+        return toolService.resolveSymbol(body == null ? Map.of() : body);
     }
 
     @PostMapping("/find-references")
-    public McpEnvelope findReferences(@RequestBody Map<String, Object> body) {
-        return toolService.findReferences(body);
+    public McpEnvelope findReferences(@RequestBody(required = false) Map<String, Object> body) {
+        return toolService.findReferences(body == null ? Map.of() : body);
     }
 
     @PostMapping("/run-analyzer")
-    public McpEnvelope runAnalyzer(@RequestBody Map<String, Object> body) {
-        return toolService.runAnalyzer(body);
+    public McpEnvelope runAnalyzer(@RequestBody(required = false) Map<String, Object> body) {
+        return toolService.runAnalyzer(body == null ? Map.of() : body);
     }
 
     @PostMapping("/run-sandbox")
-    public McpEnvelope runSandbox(@RequestBody Map<String, Object> body) {
-        return toolService.runSandbox(body);
+    public McpEnvelope runSandbox(@RequestBody(required = false) Map<String, Object> body) {
+        return toolService.runSandbox(body == null ? Map.of() : body);
     }
 
     @PostMapping("/query-tests")
-    public McpEnvelope queryTests(@RequestBody Map<String, Object> body) {
-        return toolService.queryTests(body);
+    public McpEnvelope queryTests(@RequestBody(required = false) Map<String, Object> body) {
+        return toolService.queryTests(body == null ? Map.of() : body);
     }
 }

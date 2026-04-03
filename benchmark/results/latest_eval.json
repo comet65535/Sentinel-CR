@@ -1,0 +1,121 @@
+{
+  "schema_version": "day7.eval.v1",
+  "generated_at": "2026-04-03T14:13:42.036460+00:00",
+  "mode": "offline",
+  "ok": true,
+  "error": null,
+  "summary": {
+    "case_count": 2,
+    "ok_cases": 0,
+    "failed_cases": 2
+  },
+  "metrics": {
+    "detection_precision": 0.0,
+    "detection_recall": 0.0,
+    "patch_generation_rate": 0.0,
+    "patch_apply_rate": 0.0,
+    "l1_pass_rate": 0.0,
+    "l2_pass_rate": 0.0,
+    "l3_pass_rate": 0.0,
+    "l4_pass_rate": 0.0,
+    "final_verified_patch_rate": 0.0,
+    "retry_avg": 0.0,
+    "latency_avg": 0.0,
+    "token_cost": 0.0,
+    "tool_calling_recall": 0.0,
+    "tool_calling_precision": 0.0
+  },
+  "funnel": {
+    "total": 2,
+    "stages": {
+      "detected": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "patch_generated": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "patch_applied": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l1": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l2": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l3": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l4": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "verified": {
+        "count": 0,
+        "rate": 0.0
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "case_002_missing_return_boolean",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
+      "case_id": "case_007_n_plus_one",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    }
+  ]
+}

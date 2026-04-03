@@ -1,0 +1,69 @@
+{
+  "schema_version": "day7.eval.v1",
+  "generated_at": "2026-04-03T14:13:42.067163+00:00",
+  "mode": "live",
+  "ok": false,
+  "error": {
+    "code": "not_configured",
+    "message": "Live mode requires --backend-base-url."
+  },
+  "summary": {
+    "case_count": 0,
+    "ok_cases": 0,
+    "failed_cases": 0
+  },
+  "metrics": {
+    "detection_precision": 0.0,
+    "detection_recall": 0.0,
+    "patch_generation_rate": 0.0,
+    "patch_apply_rate": 0.0,
+    "l1_pass_rate": 0.0,
+    "l2_pass_rate": 0.0,
+    "l3_pass_rate": 0.0,
+    "l4_pass_rate": 0.0,
+    "final_verified_patch_rate": 0.0,
+    "retry_avg": 0.0,
+    "latency_avg": 0.0,
+    "token_cost": 0,
+    "tool_calling_recall": 0.0,
+    "tool_calling_precision": 0.0
+  },
+  "funnel": {
+    "total": 0,
+    "stages": {
+      "detected": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "patch_generated": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "patch_applied": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l1": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l2": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l3": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "l4": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "verified": {
+        "count": 0,
+        "rate": 0.0
+      }
+    }
+  },
+  "cases": []
+}

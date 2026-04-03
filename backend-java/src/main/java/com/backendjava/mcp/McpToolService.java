@@ -2,15 +2,17 @@ package com.backendjava.mcp;
 
 import com.backendjava.task.InMemoryTaskRepository;
 import com.backendjava.task.ReviewTask;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 @Service
 public class McpToolService {
+    private static final Set<String> SANDBOX_STAGES = Set.of("patch_apply", "compile", "lint", "test", "security_rescan");
+    private static final Set<String> SANDBOX_ACTIONS = Set.of("validate", "run");
+
     private final InMemoryTaskRepository taskRepository;
 
     public McpToolService(InMemoryTaskRepository taskRepository) {
@@ -23,12 +25,11 @@ public class McpToolService {
         if (task == null) {
             return error("tool", "resolve-symbol", "task_not_found", "task not found", started);
         }
-        String symbol = String.valueOf(body.getOrDefault("symbol", ""));
-        int line = findLine(task.getCodeText(), symbol);
-        return ok(
+        return error(
                 "tool",
                 "resolve-symbol",
-                Map.of("definitions", List.of(Map.of("path", "snippet.java", "line", line, "kind", "method"))),
+                "not_configured",
+                "Symbol index is not configured for this task type.",
                 started);
     }
 
@@ -38,15 +39,12 @@ public class McpToolService {
         if (task == null) {
             return error("tool", "find-references", "task_not_found", "task not found", started);
         }
-        String symbol = String.valueOf(body.getOrDefault("symbol", ""));
-        List<Map<String, Object>> refs = new ArrayList<>();
-        String[] lines = task.getCodeText().split("\\R");
-        for (int i = 0; i < lines.length; i++) {
-            if (!symbol.isBlank() && lines[i].contains(symbol)) {
-                refs.add(Map.of("path", "snippet.java", "line", i + 1, "kind", "call"));
-            }
-        }
-        return ok("tool", "find-references", Map.of("references", refs), started);
+        return error(
+                "tool",
+                "find-references",
+                "not_configured",
+                "Reference search is not configured for this task type.",
+                started);
     }
 
     public McpEnvelope runAnalyzer(Map<String, Object> body) {
@@ -54,29 +52,57 @@ public class McpToolService {
         if (findTask(String.valueOf(body.getOrDefault("taskId", ""))) == null) {
             return error("tool", "run-analyzer", "task_not_found", "task not found", started);
         }
-        return ok("tool", "run-analyzer", Map.of("issues", List.of(), "symbols", List.of(), "summary", Map.of()), started);
+        return error(
+                "tool",
+                "run-analyzer",
+                "not_configured",
+                "Analyzer execution via MCP tool is not configured.",
+                started);
     }
 
     public McpEnvelope runSandbox(Map<String, Object> body) {
         long started = System.currentTimeMillis();
-        if (findTask(String.valueOf(body.getOrDefault("taskId", ""))) == null) {
+        ReviewTask task = findTask(String.valueOf(body.getOrDefault("taskId", "")));
+        if (task == null) {
             return error("tool", "run-sandbox", "task_not_found", "task not found", started);
         }
-        String stage = String.valueOf(body.getOrDefault("stage", "sandbox"));
-        String command = String.valueOf(body.getOrDefault("command", ""));
-        String workingDirectory = String.valueOf(body.getOrDefault("working_directory", ""));
-        if (command.isBlank() || workingDirectory.isBlank()) {
-            return ok(
+        if (body.containsKey("command") || body.containsKey("shell") || body.containsKey("script")) {
+            return error(
                     "tool",
                     "run-sandbox",
-                    stageResult(stage, "skipped", null, "", "", "not_applicable", false),
+                    "invalid_request",
+                    "Direct shell command execution is not allowed.",
                     started);
         }
-        return ok(
-                "tool",
-                "run-sandbox",
-                stageResult(stage, "passed", 0, "sandbox command execution is mocked in day6", "", null, false),
-                started);
+        String stage = String.valueOf(body.getOrDefault("stage", "")).trim().toLowerCase();
+        String action = String.valueOf(body.getOrDefault("action", "run")).trim().toLowerCase();
+        if (!SANDBOX_STAGES.contains(stage)) {
+            return error("tool", "run-sandbox", "invalid_stage", "Unsupported sandbox stage.", started);
+        }
+        if (!SANDBOX_ACTIONS.contains(action)) {
+            return error("tool", "run-sandbox", "invalid_action", "Unsupported sandbox action.", started);
+        }
+
+        if (!stage.equals("patch_apply") && !stage.equals("compile")) {
+            return error(
+                    "tool",
+                    "run-sandbox",
+                    "not_configured",
+                    "Sandbox stage is not configured for execution.",
+                    started);
+        }
+
+        Map<String, Object> stageData = stageResult(
+                stage,
+                "passed",
+                0,
+                "Sandbox execution is controlled and mocked for snippet tasks.",
+                "",
+                null,
+                false);
+        stageData.put("action", action);
+        stageData.put("task_status", task.getStatus().name());
+        return ok("tool", "run-sandbox", stageData, started);
     }
 
     public McpEnvelope queryTests(Map<String, Object> body) {
@@ -84,30 +110,16 @@ public class McpToolService {
         if (findTask(String.valueOf(body.getOrDefault("taskId", ""))) == null) {
             return error("tool", "query-tests", "task_not_found", "task not found", started);
         }
-        return ok(
+        return error(
                 "tool",
                 "query-tests",
-                Map.of(
-                        "suggested_tests", List.of("SnippetTest"),
-                        "commands", List.of("mvn -q -Dtest=SnippetTest test")),
+                "not_configured",
+                "Test discovery tool is not configured for this task type.",
                 started);
     }
 
     private ReviewTask findTask(String taskId) {
         return taskRepository.findByTaskId(taskId).orElse(null);
-    }
-
-    private int findLine(String codeText, String keyword) {
-        if (keyword == null || keyword.isBlank()) {
-            return 1;
-        }
-        String[] lines = codeText.split("\\R");
-        for (int i = 0; i < lines.length; i++) {
-            if (lines[i].contains(keyword)) {
-                return i + 1;
-            }
-        }
-        return 1;
     }
 
     private Map<String, Object> stageResult(
@@ -148,6 +160,23 @@ public class McpToolService {
                 "mcp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10),
                 null,
                 Map.of("latency_ms", Math.max(0, System.currentTimeMillis() - startedMs), "cache_hit", false),
-                Map.of("code", code, "message", message));
+                Map.of("code", sanitizeCode(code), "message", sanitizeMessage(message)));
+    }
+
+    private String sanitizeCode(String code) {
+        if (code == null || code.isBlank()) {
+            return "unknown_error";
+        }
+        return code.toLowerCase().replaceAll("[^a-z0-9_]+", "_");
+    }
+
+    private String sanitizeMessage(String message) {
+        if (message == null || message.isBlank()) {
+            return "Request failed.";
+        }
+        return message
+                .replaceAll("([A-Za-z]:\\\\[^\\s]+)", "[redacted_path]")
+                .replaceAll("(/[^\\s]+)+", "[redacted_path]")
+                .replaceAll("(AKIA|sk-|api[_-]?key|token|secret)[^\\s]*", "[redacted_secret]");
     }
 }

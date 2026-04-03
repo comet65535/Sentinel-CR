@@ -2,8 +2,11 @@
 import { computed, ref } from 'vue'
 import type { ReviewEvent } from '../types/review'
 import type { ReadableStageTimelineItem } from '../utils/reviewEventView'
+import BenchmarkPanel from './BenchmarkPanel.vue'
 import IssueGraphPanel from './IssueGraphPanel.vue'
+import PatchDiffViewer from './PatchDiffViewer.vue'
 import TokenContextPanel from './TokenContextPanel.vue'
+import ToolTracePanel from './ToolTracePanel.vue'
 
 const props = defineProps<{
   open: boolean
@@ -17,7 +20,9 @@ const emit = defineEmits<{
   (event: 'close'): void
 }>()
 
-const tab = ref<'overview' | 'issue' | 'context' | 'verification' | 'memory' | 'raw'>('overview')
+const tab = ref<'overview' | 'patch' | 'issue' | 'verification' | 'memory' | 'trace' | 'benchmark' | 'raw'>(
+  'overview'
+)
 
 const latestIssueGraph = computed(() => {
   const fromResult = props.reviewResult?.issue_graph
@@ -36,13 +41,41 @@ const latestContextBudget = computed(() => {
   if (fromResult && typeof fromResult === 'object') return fromResult as Record<string, unknown>
   for (let i = props.events.length - 1; i >= 0; i -= 1) {
     const event = props.events[i]
-    if (
-      (event.eventType === 'context_budget_updated' || event.eventType === 'context_resource_loaded') &&
-      event.payload.context_budget
-    ) {
+    if (event.payload && typeof event.payload.context_budget === 'object') {
       return event.payload.context_budget as Record<string, unknown>
     }
   }
+  return null
+})
+
+const patchContent = computed(() => {
+  const patch = props.reviewResult?.patch
+  if (!patch || typeof patch !== 'object') return ''
+  const patchRecord = patch as Record<string, unknown>
+  if (typeof patchRecord.unified_diff === 'string' && patchRecord.unified_diff.trim()) {
+    return patchRecord.unified_diff
+  }
+  if (typeof patchRecord.content === 'string' && patchRecord.content.trim()) {
+    return patchRecord.content
+  }
+  return ''
+})
+
+const toolTrace = computed(() => {
+  const resultTrace = props.reviewResult?.tool_trace
+  if (Array.isArray(resultTrace)) return resultTrace
+  return []
+})
+
+const llmTrace = computed(() => {
+  const resultTrace = props.reviewResult?.llm_trace
+  if (Array.isArray(resultTrace)) return resultTrace
+  return []
+})
+
+const benchmarkSummary = computed(() => {
+  const candidate = props.reviewResult?.benchmark
+  if (candidate && typeof candidate === 'object') return candidate as Record<string, unknown>
   return null
 })
 
@@ -79,10 +112,14 @@ function stringify(value: unknown): string {
 
     <nav class="tabs">
       <button type="button" :class="{ active: tab === 'overview' }" @click="tab = 'overview'">Overview</button>
+      <button type="button" :class="{ active: tab === 'patch' }" @click="tab = 'patch'">Patch Diff</button>
       <button type="button" :class="{ active: tab === 'issue' }" @click="tab = 'issue'">Issue Graph</button>
-      <button type="button" :class="{ active: tab === 'context' }" @click="tab = 'context'">Context</button>
-      <button type="button" :class="{ active: tab === 'verification' }" @click="tab = 'verification'">Verification</button>
+      <button type="button" :class="{ active: tab === 'verification' }" @click="tab = 'verification'">
+        Verification
+      </button>
       <button type="button" :class="{ active: tab === 'memory' }" @click="tab = 'memory'">Memory</button>
+      <button type="button" :class="{ active: tab === 'trace' }" @click="tab = 'trace'">Tool Trace</button>
+      <button type="button" :class="{ active: tab === 'benchmark' }" @click="tab = 'benchmark'">Benchmark</button>
       <button type="button" :class="{ active: tab === 'raw' }" @click="tab = 'raw'">Raw Payload</button>
     </nav>
 
@@ -104,20 +141,29 @@ function stringify(value: unknown): string {
       </ul>
     </section>
 
+    <section v-if="tab === 'patch'" class="panel">
+      <PatchDiffViewer :patch-content="patchContent" />
+    </section>
+
     <section v-if="tab === 'issue'" class="panel">
       <IssueGraphPanel :issue-graph="latestIssueGraph" />
     </section>
 
-    <section v-if="tab === 'context'" class="panel">
-      <TokenContextPanel :context-budget="latestContextBudget" />
-    </section>
-
     <section v-if="tab === 'verification'" class="panel">
+      <TokenContextPanel :context-budget="latestContextBudget" />
       <pre>{{ stringify(reviewResult?.verification ?? {}) }}</pre>
     </section>
 
     <section v-if="tab === 'memory'" class="panel">
       <pre>{{ stringify(reviewResult?.memory ?? {}) }}</pre>
+    </section>
+
+    <section v-if="tab === 'trace'" class="panel">
+      <ToolTracePanel :tool-trace="toolTrace" :llm-trace="llmTrace" />
+    </section>
+
+    <section v-if="tab === 'benchmark'" class="panel">
+      <BenchmarkPanel :benchmark="benchmarkSummary" />
     </section>
 
     <section v-if="tab === 'raw'" class="panel">
@@ -180,7 +226,7 @@ function stringify(value: unknown): string {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.4rem;
 }
 
@@ -190,13 +236,18 @@ function stringify(value: unknown): string {
   color: #2f5268;
   border-radius: 8px;
   padding: 0.32rem 0.42rem;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   cursor: pointer;
 }
 
 .tabs button.active {
   background: #e8f4ff;
   border-color: #8fb7de;
+}
+
+.panel {
+  display: grid;
+  gap: 0.55rem;
 }
 
 .panel pre {

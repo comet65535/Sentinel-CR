@@ -2,10 +2,12 @@ package com.backendjava.api;
 
 import com.backendjava.api.dto.CreateReviewRequest;
 import com.backendjava.api.dto.CreateReviewResponse;
+import com.backendjava.api.dto.ReviewHistoryItemResponse;
 import com.backendjava.api.dto.ReviewTaskResponse;
 import com.backendjava.event.ReviewEvent;
 import com.backendjava.service.ReviewService;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.codec.ServerSentEvent;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 import reactor.core.publisher.Flux;
 
 @RestController
@@ -34,6 +37,11 @@ public class ReviewController {
     @GetMapping("/{taskId}")
     public ReviewTaskResponse getReviewTask(@PathVariable String taskId) {
         return reviewService.getTaskDetail(taskId);
+    }
+
+    @GetMapping
+    public List<ReviewHistoryItemResponse> listReviewTasks(@RequestParam(defaultValue = "100") int limit) {
+        return reviewService.listReviewTasks(limit);
     }
 
     @GetMapping(value = "/{taskId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

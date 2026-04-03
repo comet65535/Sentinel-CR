@@ -1,0 +1,12 @@
+run_name: sentinel_verl_smoke
+mode: smoke
+data:
+  train_file: training/verl/data/train.jsonl
+  val_file: training/verl/data/val.jsonl
+  test_file: training/verl/data/test.jsonl
+runtime:
+  require_gpu: false
+  max_steps: 1
+  batch_size: 1
+output:
+  dir: training/verl/output

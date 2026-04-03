@@ -49,6 +49,8 @@ def export_training_data(
                         "build_command": meta.get("build_command"),
                         "test_command": meta.get("test_command"),
                     },
+                    "tool_trace": _build_tool_trace(meta, matched_case),
+                    "failure_taxonomy": _build_failure_taxonomy(meta),
                     "bug_type": bug_type,
                     "source_case_id": source_case_id,
                 }
@@ -57,8 +59,16 @@ def export_training_data(
             verl_rows.append(
                 {
                     "id": f"verl::{split_name}::{case_id}",
-                    "task": _build_instruction(meta),
-                    "context": _build_input_context(meta, matched_case),
+                    "instruction": _build_instruction(meta),
+                    "input_context": _build_input_context(meta, matched_case),
+                    "expected_patch": expected_patch,
+                    "expected_verification": {
+                        "verified_level_min": meta.get("expected_verified_level_min"),
+                        "build_command": meta.get("build_command"),
+                        "test_command": meta.get("test_command"),
+                    },
+                    "tool_trace": _build_tool_trace(meta, matched_case),
+                    "failure_taxonomy": _build_failure_taxonomy(meta),
                     "expected_tool_sequence": _expected_tool_sequence(meta),
                     "expected_final_action": "emit_verified_patch",
                     "bug_type": bug_type,
@@ -155,6 +165,32 @@ def _expected_tool_sequence(meta: dict[str, Any]) -> list[str]:
     if any(token in bug_type for token in ("sql", "n_plus_one", "resource_leak")):
         sequence.append("verifier_test")
     return sequence
+
+
+def _build_tool_trace(meta: dict[str, Any], matched_case: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if matched_case and isinstance(matched_case.get("tool_trace"), list):
+        normalized: list[dict[str, Any]] = []
+        for item in matched_case.get("tool_trace", []):
+            if isinstance(item, dict):
+                normalized.append(dict(item))
+        if normalized:
+            return normalized
+    expected_detection = meta.get("expected_detection", []) if isinstance(meta.get("expected_detection"), list) else []
+    trace = [{"tool_name": str(tool), "phase": "analyzer", "success": True} for tool in expected_detection if str(tool).strip()]
+    trace.extend(
+        [
+            {"tool_name": "fixer", "phase": "fixer", "success": True},
+            {"tool_name": "verifier_compile", "phase": "verifier", "success": True},
+        ]
+    )
+    return trace
+
+
+def _build_failure_taxonomy(meta: dict[str, Any]) -> dict[str, Any]:
+    expected_if_fail = str(meta.get("expected_failure_taxonomy_if_fail") or "").strip()
+    if expected_if_fail:
+        return {"bucket": expected_if_fail, "code": None, "explanation": "expected fallback taxonomy bucket"}
+    return {"bucket": "none", "code": None, "explanation": None}
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:

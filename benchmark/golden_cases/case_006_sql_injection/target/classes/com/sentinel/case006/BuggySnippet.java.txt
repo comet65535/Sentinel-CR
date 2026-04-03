@@ -1,0 +1,2 @@
+class UserQueryBuilder { String queryById(String userId) { return "select * from users where id=" + userId; } }
+

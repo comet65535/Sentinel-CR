@@ -1,6 +1,7 @@
 import type {
   CreateReviewRequest,
   CreateReviewResponse,
+  ReviewHistoryItem,
   ReviewTask,
 } from '../types/review'
 
@@ -50,6 +51,18 @@ export async function fetchReviewTask(taskId: string): Promise<ReviewTask> {
   }
 
   return (await response.json()) as ReviewTask
+}
+
+export async function fetchReviewHistory(limit = 50): Promise<ReviewHistoryItem[]> {
+  const response = await fetch(
+    buildApiUrl(`/api/reviews?limit=${encodeURIComponent(String(limit))}`)
+  )
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, 'Failed to load review history'))
+  }
+
+  return (await response.json()) as ReviewHistoryItem[]
 }
 
 export function createReviewEventSource(taskId: string): EventSource {

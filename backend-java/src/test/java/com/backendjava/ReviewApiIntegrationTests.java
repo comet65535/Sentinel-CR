@@ -124,4 +124,52 @@ class ReviewApiIntegrationTests {
         assertThat(events).extracting(ReviewEvent::sequence).containsExactly(1L, 2L, 3L, 4L);
         assertThat(events.get(3).status()).isEqualTo(ReviewTaskStatus.COMPLETED);
     }
+
+    @Test
+    void shouldListReviewHistoryWithRequiredFields() {
+        WebTestClient webTestClient = WebTestClient.bindToServer()
+                .baseUrl("http://localhost:" + serverPort)
+                .responseTimeout(Duration.ofSeconds(10))
+                .build();
+
+        webTestClient.post()
+                .uri("/api/reviews")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "codeText", "public class HistoryDemo { }",
+                        "language", "java",
+                        "sourceType", "snippet"))
+                .exchange()
+                .expectStatus()
+                .isOk();
+
+        List<Map> historyItems = webTestClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/reviews").queryParam("limit", 20).build())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBodyList(Map.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertThat(historyItems).isNotNull();
+        assertThat(historyItems).isNotEmpty();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> item = (Map<String, Object>) historyItems.get(0);
+        assertThat(item).containsKeys(
+                "task_id",
+                "status",
+                "created_at",
+                "updated_at",
+                "title",
+                "input_kind",
+                "summary",
+                "has_patch");
+        assertThat(item.get("summary")).isInstanceOf(Map.class);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> summary = (Map<String, Object>) item.get("summary");
+        assertThat(summary).containsKeys("final_status", "verified_level", "failure_taxonomy");
+        assertThat(summary.get("failure_taxonomy")).isInstanceOf(Map.class);
+    }
 }
