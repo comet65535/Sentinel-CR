@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.failure_taxonomy import build_failure_taxonomy
 from core.schemas import EngineState
 
 
@@ -24,11 +25,12 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     failed_stage = _resolve_failed_stage(state=state, verification_result=verification_result, final_outcome=final_outcome)
     failure_reason = _resolve_failure_reason(state=state, verification_result=verification_result, final_outcome=final_outcome)
     failure_detail = _resolve_failure_detail(state=state, verification_result=verification_result, final_outcome=final_outcome)
-    failure_taxonomy = _build_failure_taxonomy(
+    failure_taxonomy = build_failure_taxonomy(
         final_outcome=final_outcome,
         failed_stage=failed_stage,
         failure_reason=failure_reason,
         failure_detail=failure_detail,
+        issue_count=len(state.issues),
     )
     retry_exhausted = bool(
         final_outcome == "failed_after_retries" and state.enable_verifier and state.retry_count >= state.max_retries
@@ -41,6 +43,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         retry_count=state.retry_count,
         retry_exhausted=retry_exhausted,
         has_syntax_issues=_has_syntax_issues(state.issues),
+        strategy_used=str((patch_artifact or {}).get("strategy_used") or ""),
         no_fix_needed=state.no_fix_needed,
     )
 
@@ -270,11 +273,22 @@ def _resolve_failure_reason(
                 return reason
     if verification_result is not None:
         top_level_reason = str(verification_result.get("failure_reason") or "").strip()
+        failed_stage = str(verification_result.get("failed_stage") or "").strip().lower()
+        strategy_used = str((state.patch_artifact or {}).get("strategy_used") or "").strip()
+        if failed_stage == "compile" and top_level_reason in {"compile_failed", ""} and strategy_used in {
+            "syntax_fix",
+            "semantic_compile_fix",
+            "llm_generation",
+        }:
+            return "compile_failed_after_repair"
         if top_level_reason:
             return top_level_reason
         stages = verification_result.get("stages", []) or []
         for stage in stages:
             if stage.get("status") == "failed":
+                if str(stage.get("stage") or "").strip().lower() == "compile":
+                    if strategy_used in {"syntax_fix", "semantic_compile_fix", "llm_generation"}:
+                        return "compile_failed_after_repair"
                 stderr_summary = str(stage.get("stderr_summary") or "").strip()
                 if stderr_summary:
                     return stderr_summary
@@ -325,11 +339,14 @@ def _build_user_message(
     retry_count: int,
     retry_exhausted: bool,
     has_syntax_issues: bool,
+    strategy_used: str,
     no_fix_needed: bool,
 ) -> str:
     if no_fix_needed:
         return "Code is healthy. No fix is needed."
     if final_outcome == "verified_patch":
+        if strategy_used == "semantic_compile_fix":
+            return "Semantic compile repair completed and compile verification passed."
         if has_syntax_issues:
             return "Syntax repair completed and compile verification passed."
         return "Patch verified at L1 or above."
@@ -344,6 +361,14 @@ def _build_user_message(
             return "Syntax repair could not produce a valid patch candidate."
         if failure_reason == "syntax_repair_failed":
             return "Syntax repair failed to build a valid patch."
+        if failure_reason == "semantic_repair_unsupported":
+            return "Current compile-semantic failure is not supported by deterministic semantic repair."
+        if failure_reason == "insufficient_context_for_semantic_fix":
+            return "Semantic compile repair needs more context before generating a safe patch."
+        if failure_reason == "unsafe_default_return":
+            return "Semantic compile repair stopped because a safe default return could not be inferred."
+        if failure_reason == "no_semantic_candidate":
+            return "Semantic compile repair could not produce a valid patch candidate."
         if has_syntax_issues:
             return "Analyzer detected syntax issues. Please fix syntax errors before retrying."
         return "No valid patch was generated."
@@ -353,6 +378,8 @@ def _build_user_message(
                 f"Syntax repair patch still failed to compile after {retry_count} retries; "
                 "retry budget is exhausted."
             )
+        if failure_reason in {"semantic_repair_unsupported", "insufficient_context_for_semantic_fix", "no_semantic_candidate"}:
+            return "Semantic compile repair failed and retry budget was exhausted."
         stage_text = failed_stage or "verifier"
         reason_suffix = f" Latest error: {failure_reason}." if failure_reason else ""
         if retry_exhausted:
@@ -366,45 +393,6 @@ def _build_user_message(
     if failure_detail:
         return f"Review did not complete successfully: {failure_detail}"
     return "Review did not complete successfully."
-
-
-def _build_failure_taxonomy(
-    *,
-    final_outcome: str,
-    failed_stage: str | None,
-    failure_reason: str | None,
-    failure_detail: str | None,
-) -> dict[str, Any]:
-    if final_outcome in {"verified_patch", "patch_generated_unverified", "no_fix_needed"}:
-        return {"bucket": "none", "code": None, "explanation": None}
-
-    normalized_stage = str(failed_stage or "").strip().lower()
-    normalized_reason = str(failure_reason or "").strip().lower()
-    normalized_detail = str(failure_detail or "").strip().lower()
-
-    if normalized_stage == "compile":
-        if "semantic" in normalized_reason or "incompatible" in normalized_detail or "cannot find symbol" in normalized_detail:
-            return {"bucket": "semantic_compile_error", "code": "semantic_compile_error", "explanation": failure_reason}
-        return {"bucket": "F3_compile_error", "code": "compile_failed", "explanation": failure_reason or failure_detail}
-    if normalized_stage == "lint":
-        return {"bucket": "F4_lint_fail", "code": "lint_failed", "explanation": failure_reason or failure_detail}
-    if normalized_stage == "test":
-        return {"bucket": "F5_test_fail", "code": "test_failed", "explanation": failure_reason or failure_detail}
-    if normalized_stage == "security_rescan":
-        return {
-            "bucket": "F6_security_rescan_fail",
-            "code": "security_rescan_failed",
-            "explanation": failure_reason or failure_detail,
-        }
-
-    if normalized_reason == "unsupported_syntax_repair":
-        return {"bucket": "F2_wrong_patch", "code": "unsupported_syntax_repair", "explanation": failure_detail}
-    if normalized_reason == "duplicate_patch_candidate":
-        return {"bucket": "F2_wrong_patch", "code": "duplicate_patch_candidate", "explanation": failure_detail}
-    if normalized_reason in {"no_repair_candidate", "syntax_repair_failed"}:
-        return {"bucket": "F2_wrong_patch", "code": normalized_reason, "explanation": failure_detail}
-
-    return {"bucket": "F7_context_insufficient", "code": failure_reason, "explanation": failure_detail}
 
 
 def _extract_llm_trace(options: dict[str, Any]) -> list[dict[str, Any]]:

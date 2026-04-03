@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from llm.clients import LlmCallResult
 from main import app
 
 client = TestClient(app)
@@ -290,3 +291,145 @@ class snippet {
     assert "tool_trace" in result
     assert "llm_trace" in result
     assert "repo_profile" in result
+
+
+def test_day7_semantic_compile_fix_missing_return_end_to_end(monkeypatch) -> None:
+    _require_javac()
+    monkeypatch.setattr("core.state_graph.retrieve_case_matches", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "missing_return",
+                    "severity": "HIGH",
+                    "message": "missing return statement",
+                    "line": 2,
+                    "column": 1,
+                    "ruleId": "forced.semantic.missing_return",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 1, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+    events = _run_review(
+        """
+class snippet {
+    String greet(String name) {
+        if (name == null) {
+            return "hello";
+        }
+    }
+}
+""".strip(),
+        task_id="rev_day7_semantic_missing_return",
+        options={"enable_verifier": True, "max_retries": 1, "enable_security_rescan": False},
+    )
+    event_types = [event["eventType"] for event in events]
+    assert "patch_generated" in event_types
+    assert "verifier_completed" in event_types
+    assert event_types[-1] == "review_completed"
+
+    result = events[-1]["payload"]["result"]
+    summary = result["summary"]
+    patch = result["patch"]
+    assert summary["final_outcome"] == "verified_patch"
+    assert summary["verified_level"] in {"L1", "L2", "L3", "L4"}
+    assert patch["strategy_used"] == "semantic_compile_fix"
+    assert "diff --git a/snippet.java b/snippet.java" in str(patch["content"])
+    assert "Applied repair strategy" not in str(patch["content"])
+    assert "Retry after" not in str(patch["content"])
+
+
+def test_day7_llm_trace_is_persisted_to_final_result(monkeypatch) -> None:
+    monkeypatch.setattr("core.state_graph.retrieve_case_matches", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "core.state_graph.run_semgrep",
+        lambda code, language="java": {
+            "issues": [
+                {
+                    "type": "custom_bug",
+                    "severity": "MEDIUM",
+                    "message": "requires llm_generation",
+                    "line": 2,
+                    "column": 1,
+                    "ruleId": "forced.llm.issue",
+                    "source": "semgrep",
+                }
+            ],
+            "summary": {
+                "issuesCount": 1,
+                "ruleset": "auto",
+                "engine": "semgrep",
+                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
+            },
+            "diagnostics": [],
+        },
+    )
+
+    class _StubClient:
+        def create_chat_completion(self, **kwargs):
+            return LlmCallResult(
+                ok=True,
+                content=json.dumps(
+                    {
+                        "strategy": "llm_generation",
+                        "patch": "\n".join(
+                            [
+                                "diff --git a/snippet.java b/snippet.java",
+                                "--- a/snippet.java",
+                                "+++ b/snippet.java",
+                                "@@ -1,5 +1,6 @@",
+                                " class snippet {",
+                                "     void run() {",
+                                "         System.out.println(\"ok\");",
+                                "+        int llmApplied = 1;",
+                                "     }",
+                                " }",
+                            ]
+                        ),
+                        "explanation": "llm patch",
+                        "risk_level": "medium",
+                    }
+                ),
+                error=None,
+                raw=None,
+                trace={
+                    "phase": "fixer",
+                    "prompt_name": "fixer_prompt",
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "token_in": 12,
+                    "token_out": 23,
+                    "latency_ms": 4,
+                    "json_mode": True,
+                    "tool_mode": "off",
+                    "cache_hit_tokens": 0,
+                    "cache_miss_tokens": 12,
+                },
+            )
+
+    monkeypatch.setattr("agents.fixer_agent.build_llm_client", lambda options: _StubClient())
+    events = _run_review(
+        """
+class snippet {
+    void run() {
+        System.out.println("ok");
+    }
+}
+""".strip(),
+        task_id="rev_day7_llm_trace",
+        options={"enable_verifier": False, "llm_enabled": True},
+    )
+    result = events[-1]["payload"]["result"]
+    assert result["patch"]["strategy_used"] == "llm_generation"
+    assert len(result["llm_trace"]) == 1
+    assert result["llm_trace"][0]["phase"] == "fixer"

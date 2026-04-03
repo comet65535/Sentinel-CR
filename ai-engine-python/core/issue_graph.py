@@ -73,6 +73,10 @@ STRATEGY_HINT_MAPPING = {
     "missing_validation": "input_validation",
     "bad_exception_handling": "exception_logging",
     "syntax_error": "syntax_fix",
+    "missing_return": "semantic_compile_fix",
+    "incomplete_return_paths": "semantic_compile_fix",
+    "uninitialized_local": "semantic_compile_fix",
+    "simple_type_mismatch": "semantic_compile_fix",
 }
 
 
@@ -317,6 +321,16 @@ def _infer_fix_scope(owner_classes: list[str]) -> str:
 
 def _normalize_issue_type(issue: dict[str, Any]) -> str:
     raw = issue["issue_type_raw"].lower()
+    message = str((issue.get("raw") or {}).get("message") or "").lower()
+    joined = f"{raw} {message}"
+    if "missing return statement" in joined:
+        return "missing_return"
+    if "not all code paths return a value" in joined:
+        return "incomplete_return_paths"
+    if "might not have been initialized" in joined:
+        return "uninitialized_local"
+    if "incompatible types" in joined or "cannot be converted to" in joined:
+        return "simple_type_mismatch"
     if "syntax_error" in raw or "parse_error" in raw or "ast_parse_error" in raw:
         return "syntax_error"
     if "null" in raw and ("pointer" in raw or "deref" in raw):

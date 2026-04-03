@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.failure_taxonomy import classify_compile_failure_bucket
 from tools import apply_patch_to_snippet, compile_java_snippet, run_lint_stage, run_security_rescan_stage, run_test_stage
 
 
@@ -53,6 +54,13 @@ def run_verifier_agent(
         code_text=str(patch_stage.get("patched_code") or code_text),
         file_name=target_file,
     )
+    if compile_stage.get("status") == "failed":
+        compile_bucket = classify_compile_failure_bucket(
+            str(compile_stage.get("stderr_summary") or ""),
+            str(compile_stage.get("reason") or ""),
+        )
+        if compile_bucket:
+            compile_stage["compile_failure_bucket"] = compile_bucket
     stages.append(_sanitize_stage_for_result(compile_stage))
     if compile_stage["status"] != "passed":
         verification = _build_verification_result(status="failed", stages=stages)
@@ -104,7 +112,7 @@ def run_verifier_agent(
 
 
 def _sanitize_stage_for_result(stage: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "stage": str(stage.get("stage")),
         "status": str(stage.get("status")),
         "exit_code": stage.get("exit_code"),
@@ -113,11 +121,15 @@ def _sanitize_stage_for_result(stage: dict[str, Any]) -> dict[str, Any]:
         "reason": stage.get("reason"),
         "retryable": bool(stage.get("retryable", False)),
     }
+    if stage.get("compile_failure_bucket"):
+        payload["compile_failure_bucket"] = stage.get("compile_failure_bucket")
+    return payload
 
 
 def _build_verification_result(*, status: str, stages: list[dict[str, Any]]) -> dict[str, Any]:
     passed_stages = [stage["stage"] for stage in stages if stage.get("status") == "passed"]
     failed_stage = next((stage["stage"] for stage in stages if stage.get("status") == "failed"), None)
+    failed_stage_payload = next((stage for stage in stages if stage.get("status") == "failed"), None)
     verified_level = _resolve_verified_level(stages)
 
     if status == "passed":
@@ -125,7 +137,7 @@ def _build_verification_result(*, status: str, stages: list[dict[str, Any]]) -> 
     else:
         summary = f"verification failed at {failed_stage or 'unknown_stage'}"
 
-    return {
+    result = {
         "status": status,
         "verified_level": verified_level,
         "passed_stages": passed_stages,
@@ -133,6 +145,9 @@ def _build_verification_result(*, status: str, stages: list[dict[str, Any]]) -> 
         "stages": stages,
         "summary": summary,
     }
+    if isinstance(failed_stage_payload, dict) and failed_stage_payload.get("compile_failure_bucket"):
+        result["compile_failure_bucket"] = failed_stage_payload.get("compile_failure_bucket")
+    return result
 
 
 def _resolve_verified_level(stages: list[dict[str, Any]]) -> str:

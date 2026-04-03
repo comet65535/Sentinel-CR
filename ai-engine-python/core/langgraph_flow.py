@@ -10,6 +10,7 @@ from langgraph.graph import END, StateGraph
 from .context_budget import initialize_context_budget, register_loaded_context
 from .mcp_client import McpClient, build_mcp_base_url
 from .events import build_event
+from .failure_taxonomy import build_failure_taxonomy
 from .schemas import EngineState, InternalReviewRunRequest, PythonEngineEvent, default_issue_graph, default_planner_summary
 
 SEMGREP_WARNING_CODES = {"SEMGREP_UNAVAILABLE", "SEMGREP_TIMEOUT", "SEMGREP_EXEC_ERROR"}
@@ -35,7 +36,9 @@ class EngineOps:
 
 
 def bootstrap_state(request: InternalReviewRunRequest) -> dict[str, Any]:
-    options = request.options or {}
+    options = dict(request.options or {})
+    if not isinstance(options.get("llm_trace"), list):
+        options["llm_trace"] = []
     return EngineState(
         task_id=request.task_id,
         code_text=request.code_text,
@@ -636,7 +639,16 @@ def _fixer_node(ops: EngineOps):
             memory_matches=state.get("memory_matches", []),
             attempt_no=attempt_no,
             last_failure=ops.get_latest_verifier_failure(state.get("short_term_memory")),
+            selected_context=state.get("selected_context", []),
+            repo_profile=state.get("repo_profile", {}),
+            options=state.get("options", {}),
         )
+        if isinstance(fixer_output.get("llm_trace"), list) and fixer_output.get("llm_trace"):
+            options = dict(state.get("options", {}))
+            traces = list(options.get("llm_trace", []))
+            traces.extend([item for item in fixer_output["llm_trace"] if isinstance(item, dict)])
+            options["llm_trace"] = traces
+            state["options"] = options
         state["latest_fixer_output"] = fixer_output
         state["patch_artifact"] = fixer_output.get("patch_artifact")
         state["patch"] = state["patch_artifact"]
@@ -823,10 +835,13 @@ def _verifier_node(ops: EngineOps):
         failed_stage = verification.get("failed_stage")
         failure_reason = verification.get("failure_reason") or _extract_failure_reason(verification)
         failure_detail = _extract_failure_detail(verification)
+        compile_failure_bucket = _extract_compile_failure_bucket(verification)
         patch_artifact = state.get("patch_artifact") or {}
         if failed_stage == "compile" and str(patch_artifact.get("strategy_used") or "") == "syntax_fix":
             failure_reason = "compile_failed_after_repair"
         verification["failure_reason"] = failure_reason
+        if compile_failure_bucket:
+            verification["compile_failure_bucket"] = compile_failure_bucket
         state["attempts"] = list(state.get("attempts", [])) + [
             _build_attempt_summary(
                 fixer_output.get("attempt", {}),
@@ -839,6 +854,13 @@ def _verifier_node(ops: EngineOps):
         ]
         retryable = bool(verification.get("retryable", False))
         retry_budget_left = max(int(state.get("max_retries", 2)) - int(state.get("retry_count", 0)), 0)
+        failure_taxonomy = build_failure_taxonomy(
+            final_outcome="failed_after_retries",
+            failed_stage=failed_stage,
+            failure_reason=failure_reason,
+            failure_detail=failure_detail,
+            issue_count=len(state.get("issues", [])),
+        )
         _record_event(
             state,
             build_event(
@@ -853,6 +875,8 @@ def _verifier_node(ops: EngineOps):
                     "failed_stage": failed_stage,
                     "reason": failure_reason,
                     "failure_detail": failure_detail,
+                    "compile_failure_bucket": compile_failure_bucket,
+                    "failure_taxonomy": failure_taxonomy,
                     "retryable": retryable,
                     "retry_budget_left": retry_budget_left,
                 },
@@ -871,9 +895,12 @@ def _verifier_node(ops: EngineOps):
                 "reason": failure_reason,
                 "detail": failure_detail,
                 "stderr_summary": failure_detail,
+                "compile_failure_bucket": compile_failure_bucket,
+                "failure_taxonomy": failure_taxonomy,
                 "attempt_no": attempt_no,
                 "previous_patch_id": patch_artifact.get("patch_id"),
                 "previous_patch_hash": previous_patch_hash,
+                "previous_patch_content": patch_artifact.get("content"),
             },
         )
         _record_debug_event(
@@ -1088,6 +1115,18 @@ def _extract_failure_detail(verification: dict[str, Any]) -> str | None:
             stdout = str(stage.get("stdout_summary") or "").strip()
             if stdout:
                 return stdout
+    return None
+
+
+def _extract_compile_failure_bucket(verification: dict[str, Any]) -> str | None:
+    for stage in verification.get("stages", []):
+        if stage.get("status") != "failed":
+            continue
+        if str(stage.get("stage") or "").strip().lower() != "compile":
+            continue
+        bucket = str(stage.get("compile_failure_bucket") or "").strip()
+        if bucket:
+            return bucket
     return None
 
 
