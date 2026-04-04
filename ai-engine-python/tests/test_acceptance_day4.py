@@ -1,229 +1,116 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fastapi.testclient import TestClient
 
+from llm.clients import LlmCallResult
 from main import app
 
 client = TestClient(app)
 
 
-def _run_review(code_text: str, *, task_id: str) -> list[dict]:
-    request_body = {
-        "taskId": task_id,
-        "codeText": code_text,
-        "language": "java",
-        "sourceType": "snippet",
-        "metadata": {},
-    }
-    response = client.post("/internal/reviews/run", json=request_body)
+def _run_review(code_text: str, *, task_id: str, options: dict[str, Any] | None = None) -> list[dict]:
+    response = client.post(
+        "/internal/reviews/run",
+        json={
+            "taskId": task_id,
+            "codeText": code_text,
+            "language": "java",
+            "sourceType": "snippet",
+            "options": options or {},
+            "metadata": {},
+        },
+    )
     assert response.status_code == 200
-    lines = [line for line in response.text.splitlines() if line.strip()]
-    return [json.loads(line) for line in lines]
+    return [json.loads(line) for line in response.text.splitlines() if line.strip()]
 
 
-def test_day4_success_contract_and_event_order(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "core.state_graph.run_semgrep",
-        lambda code, language="java": {
-            "issues": [
-                {
-                    "type": "null_pointer",
-                    "severity": "MEDIUM",
-                    "message": "null may dereference",
-                    "line": 3,
-                    "column": 1,
-                    "ruleId": "forced.issue",
-                    "source": "semgrep",
-                }
-            ],
-            "summary": {
-                "issuesCount": 1,
-                "ruleset": "auto",
-                "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
-            },
-            "diagnostics": [],
-        },
-    )
+def test_day4_missing_credentials_never_emit_fake_patch() -> None:
     events = _run_review(
-        """
-public class UserService {
-    public String findName(String id) {
-        User user = repo.findById(id).get();
-        return user.getName();
-    }
-}
-""".strip(),
-        task_id="rev_day4_success",
+        "class snippet { void run(){} }",
+        task_id="rev_day4_missing_credentials",
+        options={"llm_enabled": True, "llm_api_key": ""},
     )
     event_types = [event["eventType"] for event in events]
-
-    assert event_types.count("review_completed") == 1
-    assert "review_failed" not in event_types
-    assert "patch_generated" in event_types
-    assert "fixer_failed" not in event_types
-    assert "fixer_completed" in event_types
-
-    idx_search = event_types.index("case_memory_search_started")
-    idx_completed = event_types.index("case_memory_completed")
-    idx_fixer_started = event_types.index("fixer_started")
-    idx_patch_generated = event_types.index("patch_generated")
-    idx_fixer_completed = event_types.index("fixer_completed")
-    idx_review_completed = event_types.index("review_completed")
-    assert idx_search < idx_completed < idx_fixer_started < idx_patch_generated < idx_fixer_completed < idx_review_completed
-
-    if "case_memory_matched" in event_types:
-        idx_matched = event_types.index("case_memory_matched")
-        assert idx_search < idx_matched < idx_completed
-
-    payload = events[-1]["payload"]
-    result = payload["result"]
-
-    assert "memory" in result
-    assert isinstance(result["memory"]["matches"], list)
-    assert len(result["memory"]["matches"]) >= 0
-
-    assert "patch" in result
-    patch = result["patch"]
-    assert patch["status"] == "generated"
-    assert patch["format"] == "unified_diff"
-    assert patch["content"].startswith("diff --git a/snippet.java b/snippet.java")
-    assert patch["target_files"] == ["snippet.java"]
-    assert "--- a/snippet.java" in patch["content"]
-    assert "+++ b/snippet.java" in patch["content"]
-
-    attempts = result["attempts"]
-    assert len(attempts) >= 1
-    assert attempts[0]["status"] == "generated"
-    assert attempts[0]["failure_stage"] is None
-    assert attempts[0]["failure_reason"] is None
-    assert attempts[0]["failure_detail"] is None
-
-    assert result["summary"]["final_outcome"] == "patch_generated_unverified"
-    assert result["summary"]["memory_match_count"] >= 0
-    assert payload["result"] is not None
-
-
-def test_day4_failure_contract(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "core.state_graph.run_semgrep",
-        lambda code, language="java": {
-            "issues": [
-                {
-                    "type": "null_pointer",
-                    "severity": "MEDIUM",
-                    "message": "null may dereference",
-                    "line": 3,
-                    "column": 1,
-                    "ruleId": "forced.issue",
-                    "source": "semgrep",
-                }
-            ],
-            "summary": {
-                "issuesCount": 1,
-                "ruleset": "auto",
-                "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
-            },
-            "diagnostics": [],
-        },
-    )
-
-    monkeypatch.setattr(
-        "core.state_graph.run_fixer_agent",
-        lambda **kwargs: {
-            "ok": False,
-            "patch_artifact": None,
-            "attempt": {
-                "attempt_no": 1,
-                "patch_id": "patch_attempt_1",
-                "status": "failed",
-                "verified_level": "L0",
-                "failure_stage": "fixer",
-                "failure_reason": "no_valid_patch",
-                "failure_detail": "forced by test",
-                "memory_case_ids": [],
-            },
-        },
-    )
-
-    events = _run_review(
-        """
-public class Demo {
-    public void run() {
-        System.out.println("x");
-    }
-}
-""".strip(),
-        task_id="rev_day4_failure",
-    )
-    event_types = [event["eventType"] for event in events]
-
-    assert event_types.count("review_completed") == 1
-    assert "fixer_failed" in event_types
     assert "patch_generated" not in event_types
-    assert "fixer_completed" not in event_types
-    assert "review_failed" not in event_types
-
-    idx_search = event_types.index("case_memory_search_started")
-    idx_completed = event_types.index("case_memory_completed")
-    idx_fixer_started = event_types.index("fixer_started")
-    idx_fixer_failed = event_types.index("fixer_failed")
-    idx_review_completed = event_types.index("review_completed")
-    assert idx_search < idx_completed < idx_fixer_started < idx_fixer_failed < idx_review_completed
-
-    payload = events[-1]["payload"]
-    result = payload["result"]
-    patch = result["patch"]
-    assert patch["status"] == "absent"
-    assert result["summary"]["final_outcome"] == "failed_no_patch"
-
-    attempts = result["attempts"]
-    assert attempts[0]["status"] == "failed"
-    assert attempts[0]["failure_stage"] == "fixer"
-    assert attempts[0]["failure_reason"] == "no_valid_patch"
+    result = events[-1]["payload"]["result"]
+    assert result["patch"]["status"] == "absent"
+    assert result["attempts"][-1]["failure_reason"] == "llm_not_enabled_or_missing_credentials"
 
 
-def test_day4_review_completed_must_close_after_fixer_success(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "core.state_graph.run_semgrep",
-        lambda code, language="java": {
-            "issues": [
-                {
-                    "type": "null_pointer",
-                    "severity": "MEDIUM",
-                    "message": "null may dereference",
-                    "line": 3,
-                    "column": 1,
-                    "ruleId": "forced.issue",
-                    "source": "semgrep",
-                }
-            ],
-            "summary": {
-                "issuesCount": 1,
-                "ruleset": "auto",
-                "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
-            },
-            "diagnostics": [],
-        },
-    )
+def test_day4_action_loop_generates_patch_and_traces(monkeypatch) -> None:
+    class _StubLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create_chat_completion(self, *, phase: str, prompt_name: str, **_: Any) -> LlmCallResult:
+            self.calls += 1
+            if self.calls == 1:
+                content = json.dumps(
+                    {
+                        "thought_summary": "need evidence",
+                        "next_action": "analyze_ast",
+                        "action_args": {},
+                        "need_more_context": True,
+                        "candidate_patch": None,
+                        "explanation": "collect signals",
+                    }
+                )
+            else:
+                content = json.dumps(
+                    {
+                        "thought_summary": "ready to patch",
+                        "next_action": "finalize_patch",
+                        "action_args": {},
+                        "need_more_context": False,
+                        "candidate_patch": "\n".join(
+                            [
+                                "diff --git a/snippet.java b/snippet.java",
+                                "--- a/snippet.java",
+                                "+++ b/snippet.java",
+                                "@@ -1,1 +1,2 @@",
+                                " class snippet { void run(){} }",
+                                "+class Added {}",
+                            ]
+                        ),
+                        "explanation": "minimal meaningful change",
+                    }
+                )
+            return LlmCallResult(
+                ok=True,
+                content=content,
+                error=None,
+                raw={"stub": True},
+                trace={
+                    "phase": phase,
+                    "prompt_name": prompt_name,
+                    "provider": "stub",
+                    "model": "stub-model",
+                    "token_in": 16,
+                    "token_out": 16,
+                    "latency_ms": 2,
+                    "json_mode": True,
+                    "tool_mode": "auto",
+                    "tool_call_count": 0,
+                    "cache_hit_tokens": 0,
+                    "cache_miss_tokens": 16,
+                },
+                tool_calls=[],
+            )
+
+    monkeypatch.setattr("agents.fixer_agent.build_llm_client", lambda options: _StubLlm())
 
     events = _run_review(
-        """
-class Snippet {
-    void run() {
-        System.out.println("ok");
-    }
-}
-""".strip(),
-        task_id="rev_day4_close_once",
+        "class snippet { void run(){} }",
+        task_id="rev_day4_llm_orchestrator",
+        options={"llm_enabled": True, "llm_tool_mode": "auto", "enable_verifier": False},
     )
     event_types = [event["eventType"] for event in events]
-
     assert "patch_generated" in event_types
-    assert "fixer_completed" in event_types
-    assert event_types.count("review_completed") == 1
-    assert "review_failed" not in event_types
+    result = events[-1]["payload"]["result"]
+    assert result["summary"]["final_outcome"] == "patch_generated_unverified"
+    assert len(result["llm_trace"]) > 0
+    assert len(result["tool_trace"]) > 0
+    assert "Generated minimal non-comment fallback patch." not in json.dumps(result, ensure_ascii=False)

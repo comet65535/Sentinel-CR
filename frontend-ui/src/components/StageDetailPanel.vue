@@ -113,14 +113,14 @@ function stringify(value: unknown): string {
     <nav class="tabs">
       <button type="button" :class="{ active: tab === 'overview' }" @click="tab = 'overview'">Overview</button>
       <button type="button" :class="{ active: tab === 'patch' }" @click="tab = 'patch'">Patch Diff</button>
-      <button type="button" :class="{ active: tab === 'issue' }" @click="tab = 'issue'">Issue Graph</button>
+      <button v-if="debugMode" type="button" :class="{ active: tab === 'issue' }" @click="tab = 'issue'">Issue Graph</button>
       <button type="button" :class="{ active: tab === 'verification' }" @click="tab = 'verification'">
         Verification
       </button>
-      <button type="button" :class="{ active: tab === 'memory' }" @click="tab = 'memory'">Memory</button>
-      <button type="button" :class="{ active: tab === 'trace' }" @click="tab = 'trace'">Tool Trace</button>
-      <button type="button" :class="{ active: tab === 'benchmark' }" @click="tab = 'benchmark'">Benchmark</button>
-      <button type="button" :class="{ active: tab === 'raw' }" @click="tab = 'raw'">Raw Payload</button>
+      <button v-if="debugMode" type="button" :class="{ active: tab === 'memory' }" @click="tab = 'memory'">Memory</button>
+      <button v-if="debugMode" type="button" :class="{ active: tab === 'trace' }" @click="tab = 'trace'">Tool Trace</button>
+      <button v-if="debugMode" type="button" :class="{ active: tab === 'benchmark' }" @click="tab = 'benchmark'">Benchmark</button>
+      <button v-if="debugMode" type="button" :class="{ active: tab === 'raw' }" @click="tab = 'raw'">Raw Payload</button>
     </nav>
 
     <section v-if="tab === 'overview'" class="panel">
@@ -145,7 +145,7 @@ function stringify(value: unknown): string {
       <PatchDiffViewer :patch-content="patchContent" />
     </section>
 
-    <section v-if="tab === 'issue'" class="panel">
+    <section v-if="debugMode && tab === 'issue'" class="panel">
       <IssueGraphPanel :issue-graph="latestIssueGraph" />
     </section>
 
@@ -154,19 +154,20 @@ function stringify(value: unknown): string {
       <pre>{{ stringify(reviewResult?.verification ?? {}) }}</pre>
     </section>
 
-    <section v-if="tab === 'memory'" class="panel">
+    <section v-if="debugMode && tab === 'memory'" class="panel">
       <pre>{{ stringify(reviewResult?.memory ?? {}) }}</pre>
+      <pre>{{ stringify(reviewResult?.memory_hits ?? {}) }}</pre>
     </section>
 
-    <section v-if="tab === 'trace'" class="panel">
+    <section v-if="debugMode && tab === 'trace'" class="panel">
       <ToolTracePanel :tool-trace="toolTrace" :llm-trace="llmTrace" />
     </section>
 
-    <section v-if="tab === 'benchmark'" class="panel">
+    <section v-if="debugMode && tab === 'benchmark'" class="panel">
       <BenchmarkPanel :benchmark="benchmarkSummary" />
     </section>
 
-    <section v-if="tab === 'raw'" class="panel">
+    <section v-if="debugMode && tab === 'raw'" class="panel">
       <pre>{{ stringify(reviewResult ?? {}) }}</pre>
       <template v-if="debugMode">
         <div class="debug-block" v-for="event in events" :key="event.sequence">

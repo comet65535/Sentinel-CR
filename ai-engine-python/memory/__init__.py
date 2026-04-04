@@ -11,13 +11,19 @@ from .case_store import (
 )
 from .knowledge_store import get_repo_profile, search_semantic_compile_repairs, search_standards
 from .repo_memory import load_repo_profile, resolve_repo_profile, summarize_repo_profile
-from .short_term import build_short_term_snapshot, get_latest_verifier_failure, update_short_term_memory
+from .short_term import (
+    build_short_term_snapshot,
+    get_latest_verifier_failure,
+    load_conversation_short_term_memory,
+    update_short_term_memory,
+)
 
 __all__ = [
     "append_case",
     "build_short_term_snapshot",
     "get_repo_profile",
     "get_latest_verifier_failure",
+    "load_conversation_short_term_memory",
     "load_case_examples",
     "load_cases",
     "load_repo_profile",

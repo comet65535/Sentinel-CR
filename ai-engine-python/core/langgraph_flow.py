@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from langgraph.graph import END, StateGraph
+from memory import load_conversation_short_term_memory
 
 from .context_budget import initialize_context_budget, register_loaded_context
 from .mcp_client import McpClient, build_mcp_base_url
@@ -39,8 +40,17 @@ def bootstrap_state(request: InternalReviewRunRequest) -> dict[str, Any]:
     options = dict(request.options or {})
     if not isinstance(options.get("llm_trace"), list):
         options["llm_trace"] = []
+    short_term_memory = (
+        load_conversation_short_term_memory(request.conversation_id)
+        if request.conversation_id
+        else {}
+    )
     return EngineState(
         task_id=request.task_id,
+        conversation_id=request.conversation_id,
+        message_id=request.message_id,
+        parent_message_id=request.parent_message_id,
+        message_text=request.message_text,
         code_text=request.code_text,
         language=request.language,
         issues=[],
@@ -52,7 +62,7 @@ def bootstrap_state(request: InternalReviewRunRequest) -> dict[str, Any]:
         repair_plan=[],
         planner_summary=default_planner_summary(),
         memory_matches=[],
-        short_term_memory={},
+        short_term_memory=short_term_memory,
         repo_profile={},
         case_store_summary={"source": "jsonl", "promotion_candidate": False},
         patch_artifact=None,
@@ -61,7 +71,10 @@ def bootstrap_state(request: InternalReviewRunRequest) -> dict[str, Any]:
         verification_result=None,
         context_budget=initialize_context_budget(options),
         selected_context=[],
+        memory_hits={},
         tool_trace=[],
+        llm_trace=[],
+        action_history=[],
         options=options,
         metadata=request.metadata or {},
         debug_enabled=bool(options.get("debug", False)),
@@ -78,19 +91,13 @@ def bootstrap_state(request: InternalReviewRunRequest) -> dict[str, Any]:
 def build_langgraph(ops: EngineOps):
     graph = StateGraph(dict)
     graph.add_node("bootstrap", _bootstrap_node(ops))
-    graph.add_node("analyzer", _analyzer_node(ops))
-    graph.add_node("planner", _planner_node(ops))
-    graph.add_node("memory_retrieval", _memory_node(ops))
     graph.add_node("fixer", _fixer_node(ops))
     graph.add_node("verifier", _verifier_node(ops))
     graph.add_node("retry_router", _retry_router_node())
     graph.add_node("reporter", _reporter_node(ops))
 
     graph.set_entry_point("bootstrap")
-    graph.add_edge("bootstrap", "analyzer")
-    graph.add_conditional_edges("analyzer", _route_after_analyzer, {"planner": "planner", "reporter": "reporter"})
-    graph.add_edge("planner", "memory_retrieval")
-    graph.add_edge("memory_retrieval", "fixer")
+    graph.add_edge("bootstrap", "fixer")
     graph.add_conditional_edges("fixer", _route_after_fixer, {"verifier": "verifier", "reporter": "reporter"})
     graph.add_conditional_edges("verifier", _route_after_verifier, {"retry_router": "retry_router", "reporter": "reporter"})
     graph.add_conditional_edges("retry_router", _route_after_retry, {"fixer": "fixer", "reporter": "reporter"})
@@ -642,13 +649,41 @@ def _fixer_node(ops: EngineOps):
             selected_context=state.get("selected_context", []),
             repo_profile=state.get("repo_profile", {}),
             options=state.get("options", {}),
+            message_text=state.get("message_text"),
+            action_history=state.get("action_history", []),
         )
-        if isinstance(fixer_output.get("llm_trace"), list) and fixer_output.get("llm_trace"):
+        if isinstance(fixer_output.get("llm_trace"), list):
+            state["llm_trace"] = list(state.get("llm_trace", [])) + [
+                item for item in fixer_output.get("llm_trace", []) if isinstance(item, dict)
+            ]
             options = dict(state.get("options", {}))
-            traces = list(options.get("llm_trace", []))
-            traces.extend([item for item in fixer_output["llm_trace"] if isinstance(item, dict)])
-            options["llm_trace"] = traces
+            options["llm_trace"] = state["llm_trace"]
             state["options"] = options
+        if isinstance(fixer_output.get("tool_trace"), list):
+            state["tool_trace"] = list(state.get("tool_trace", [])) + [
+                item for item in fixer_output.get("tool_trace", []) if isinstance(item, dict)
+            ]
+        if isinstance(fixer_output.get("selected_context"), list):
+            state["selected_context"] = [item for item in fixer_output["selected_context"] if isinstance(item, dict)]
+        if isinstance(fixer_output.get("memory_hits"), dict):
+            state["memory_hits"] = dict(fixer_output["memory_hits"])
+            cases = state["memory_hits"].get("cases")
+            if isinstance(cases, list):
+                state["memory_matches"] = [item for item in cases if isinstance(item, dict)]
+        if isinstance(fixer_output.get("issues"), list):
+            state["issues"] = [item for item in fixer_output["issues"] if isinstance(item, dict)]
+        if isinstance(fixer_output.get("symbols"), list):
+            state["symbols"] = [item for item in fixer_output["symbols"] if isinstance(item, dict)]
+        if isinstance(fixer_output.get("context_summary"), dict):
+            state["context_summary"] = dict(fixer_output["context_summary"])
+        if isinstance(fixer_output.get("repair_plan"), list):
+            state["repair_plan"] = [item for item in fixer_output["repair_plan"] if isinstance(item, dict)]
+        if isinstance(fixer_output.get("issue_graph"), dict):
+            state["issue_graph"] = dict(fixer_output["issue_graph"])
+        if isinstance(fixer_output.get("planner_summary"), dict):
+            state["planner_summary"] = dict(fixer_output["planner_summary"])
+        if isinstance(fixer_output.get("action_history"), list):
+            state["action_history"] = [item for item in fixer_output["action_history"] if isinstance(item, dict)]
         state["latest_fixer_output"] = fixer_output
         state["patch_artifact"] = fixer_output.get("patch_artifact")
         state["patch"] = state["patch_artifact"]
@@ -703,6 +738,8 @@ def _fixer_node(ops: EngineOps):
                     "stage": "fixer",
                     "attempt_no": attempt_no,
                     "patch_id": (state["patch_artifact"] or {}).get("patch_id"),
+                    "llm_trace_count": len(state.get("llm_trace", [])),
+                    "tool_trace_count": len(state.get("tool_trace", [])),
                 },
             ),
         )

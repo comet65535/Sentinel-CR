@@ -39,6 +39,10 @@ public class PythonAiEngineAdapter implements AiEngineAdapter {
 
         PythonReviewRunRequest requestBody = new PythonReviewRunRequest(
                 task.getTaskId(),
+                task.getConversationId(),
+                task.getMessageId(),
+                task.getParentMessageId(),
+                task.getMessageText(),
                 task.getCodeText(),
                 task.getLanguage(),
                 task.getSourceType(),

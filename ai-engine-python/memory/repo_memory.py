@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -30,6 +30,7 @@ def load_repo_profile(
     repo_id: str | None = None,
     profiles_dir: str | Path | None = None,
 ) -> dict[str, Any]:
+    profile = {}
     for base_dir in _candidate_profile_dirs(profiles_dir):
         if not base_dir.exists():
             continue
@@ -50,8 +51,14 @@ def load_repo_profile(
             except Exception:
                 continue
             if isinstance(parsed, dict):
-                return _normalize_profile(parsed)
-    return {}
+                profile = _merge_profile(profile, parsed)
+                if repo_profile_id or repo_id:
+                    return _normalize_profile(profile)
+
+    # Optional repository-local rules.
+    local_rules = _load_local_agent_rules()
+    profile = _merge_profile(profile, local_rules)
+    return _normalize_profile(profile) if profile else {}
 
 
 def resolve_repo_profile(
@@ -79,6 +86,7 @@ def summarize_repo_profile(profile: dict[str, Any] | None) -> dict[str, Any]:
         "preferred_test_command": profile.get("preferred_test_command"),
         "rejected_patch_patterns": list(profile.get("rejected_patch_patterns") or []),
         "hotspots": list(profile.get("hotspots") or []),
+        "repo_rules": dict(profile.get("repo_rules") or {}),
     }
 
 
@@ -92,4 +100,52 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("preferred_test_command", None)
     normalized.setdefault("rejected_patch_patterns", [])
     normalized.setdefault("hotspots", [])
+    normalized.setdefault("repo_rules", {})
     return normalized
+
+
+def _merge_profile(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, list):
+            merged[key] = _unique_list(list(merged.get(key) or []) + list(value))
+        elif isinstance(value, dict):
+            current = dict(merged.get(key) or {})
+            current.update(value)
+            merged[key] = current
+        else:
+            merged[key] = value
+    return merged
+
+
+def _unique_list(items: list[Any]) -> list[Any]:
+    seen = set()
+    unique: list[Any] = []
+    for item in items:
+        token = json.dumps(item, ensure_ascii=False, sort_keys=True) if isinstance(item, (dict, list)) else str(item)
+        if token in seen:
+            continue
+        seen.add(token)
+        unique.append(item)
+    return unique
+
+
+def _load_local_agent_rules() -> dict[str, Any]:
+    # Optional workspace rules at <repo>/.agent_config.yaml
+    path = Path(__file__).resolve().parents[2] / ".agent_config.yaml"
+    if not path.exists():
+        return {}
+
+    rules: dict[str, Any] = {"repo_rules": {}}
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            rules["repo_rules"][key] = value
+    except Exception:
+        return {}
+    return rules

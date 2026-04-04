@@ -16,72 +16,26 @@ def _collect_events(request: InternalReviewRunRequest) -> list[dict]:
     return asyncio.run(_run())
 
 
-def test_langgraph_normal_flow(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "core.state_graph.run_semgrep",
-        lambda code, language="java": {
-            "issues": [
-                {
-                    "type": "null_pointer",
-                    "severity": "MEDIUM",
-                    "message": "null may dereference",
-                    "line": 3,
-                    "column": 1,
-                    "ruleId": "forced.issue",
-                    "source": "semgrep",
-                }
-            ],
-            "summary": {
-                "issuesCount": 1,
-                "ruleset": "auto",
-                "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
-            },
-            "diagnostics": [],
-        },
-    )
-
+def test_langgraph_reports_llm_disabled_without_fake_patch() -> None:
     request = InternalReviewRunRequest(
-        taskId="rev_langgraph_ok",
-        codeText="class snippet { void run(){ System.out.println(\"ok\"); } }",
+        taskId="rev_langgraph_llm_disabled",
+        codeText="class snippet { void run(){} }",
         language="java",
         sourceType="snippet",
-        options={"enable_verifier": False},
-        metadata={},
+        options={"llm_enabled": False},
     )
     events = _collect_events(request)
     event_types = [item["eventType"] for item in events]
-    assert "planner_started" in event_types
-    assert "issue_graph_built" in event_types
-    assert "fixer_started" in event_types
-    assert "review_completed" in event_types
+    assert event_types[:2] == ["analysis_started", "fixer_started"]
+    assert "fixer_failed" in event_types
+    assert event_types[-1] == "review_completed"
+    result = events[-1]["payload"]["result"]
+    assert result["summary"]["final_outcome"] == "failed_no_patch"
+    assert result["patch"]["status"] == "absent"
+    assert result["attempts"][-1]["failure_reason"] == "llm_not_enabled_or_missing_credentials"
 
 
-def test_langgraph_retry_branch(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "core.state_graph.run_semgrep",
-        lambda code, language="java": {
-            "issues": [
-                {
-                    "type": "null_pointer",
-                    "severity": "MEDIUM",
-                    "message": "null may dereference",
-                    "line": 3,
-                    "column": 1,
-                    "ruleId": "forced.issue",
-                    "source": "semgrep",
-                }
-            ],
-            "summary": {
-                "issuesCount": 1,
-                "ruleset": "auto",
-                "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 1, "HIGH": 0, "CRITICAL": 0},
-            },
-            "diagnostics": [],
-        },
-    )
-
+def test_langgraph_retry_path_keeps_closed_loop(monkeypatch) -> None:
     monkeypatch.setattr(
         "core.state_graph.run_fixer_agent",
         lambda **kwargs: {
@@ -97,15 +51,27 @@ def test_langgraph_retry_branch(monkeypatch) -> None:
                         "--- a/snippet.java",
                         "+++ b/snippet.java",
                         "@@ -1,1 +1,2 @@",
-                        " class snippet {",
-                        "+// force patch",
+                        " class snippet { void run(){} }",
+                        "+class marker {}",
                     ]
                 ),
+                "content_hash": "hash",
+                "strategy_used": "llm_generation",
                 "target_files": ["snippet.java"],
-                "strategy_used": "test",
                 "memory_case_ids": [],
             },
-            "attempt": {"attempt_no": kwargs.get("attempt_no"), "patch_id": f"patch_{kwargs.get('attempt_no')}", "memory_case_ids": []},
+            "attempt": {"attempt_no": kwargs.get("attempt_no"), "patch_id": f"patch_{kwargs.get('attempt_no')}"},
+            "llm_trace": [{"phase": "fixer", "provider": "stub"}],
+            "tool_trace": [{"tool_name": "analyze_ast", "success": True}],
+            "selected_context": [{"kind": "issue_vicinity"}],
+            "memory_hits": {"cases": [], "standards": []},
+            "issues": kwargs.get("issues", []),
+            "symbols": kwargs.get("symbols", []),
+            "context_summary": kwargs.get("context_summary", {}),
+            "repair_plan": kwargs.get("repair_plan", []),
+            "issue_graph": {"schema_version": "day3.v1", "nodes": [], "edges": []},
+            "planner_summary": {},
+            "action_history": [{"step": kwargs.get("attempt_no"), "next_action": "finalize_patch"}],
         },
     )
 
@@ -113,80 +79,40 @@ def test_langgraph_retry_branch(monkeypatch) -> None:
 
     def _stub_verifier(**kwargs):
         verify_calls["count"] += 1
-        first_attempt = verify_calls["count"] == 1
+        first = verify_calls["count"] == 1
         return {
-            "status": "failed" if first_attempt else "passed",
-            "verified_level": "L0" if first_attempt else "L1",
-            "passed_stages": [] if first_attempt else ["patch_apply", "compile"],
-            "failed_stage": "compile" if first_attempt else None,
+            "status": "failed" if first else "passed",
+            "verified_level": "L0" if first else "L1",
+            "passed_stages": ["patch_apply"] if first else ["patch_apply", "compile"],
+            "failed_stage": "compile" if first else None,
             "stages": [
-                {
-                    "stage": "patch_apply",
-                    "status": "passed",
-                    "exit_code": 0,
-                    "stdout_summary": "",
-                    "stderr_summary": "",
-                    "reason": None,
-                    "retryable": False,
-                },
+                {"stage": "patch_apply", "status": "passed", "exit_code": 0, "stderr_summary": "", "retryable": False},
                 {
                     "stage": "compile",
-                    "status": "failed" if first_attempt else "passed",
-                    "exit_code": 1 if first_attempt else 0,
-                    "stdout_summary": "",
-                    "stderr_summary": "compile error" if first_attempt else "",
-                    "reason": "compile_failed" if first_attempt else None,
-                    "retryable": first_attempt,
+                    "status": "failed" if first else "passed",
+                    "exit_code": 1 if first else 0,
+                    "stderr_summary": "compile error" if first else "",
+                    "reason": "compile_failed" if first else None,
+                    "retryable": first,
                 },
             ],
             "summary": "forced",
-            "retryable": first_attempt,
-            "failure_reason": "compile_failed" if first_attempt else None,
+            "retryable": first,
+            "failure_reason": "compile_failed" if first else None,
         }
 
     monkeypatch.setattr("core.state_graph.run_verifier_agent", _stub_verifier)
 
     request = InternalReviewRunRequest(
         taskId="rev_langgraph_retry",
-        codeText="class snippet { void run(){ System.out.println(\"ok\"); } }",
+        codeText="class snippet { void run(){} }",
         language="java",
         sourceType="snippet",
         options={"enable_verifier": True, "max_retries": 1},
-        metadata={},
     )
     events = _collect_events(request)
     event_types = [item["eventType"] for item in events]
-    assert "verifier_failed" in event_types
     assert "review_retry_scheduled" in event_types
     assert "review_retry_started" in event_types
-    assert "review_completed" in event_types
-
-
-def test_langgraph_zero_issue_short_circuit(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "core.state_graph.run_semgrep",
-        lambda code, language="java": {
-            "issues": [],
-            "summary": {
-                "issuesCount": 0,
-                "ruleset": "auto",
-                "engine": "semgrep",
-                "severityBreakdown": {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
-            },
-            "diagnostics": [],
-        },
-    )
-
-    request = InternalReviewRunRequest(
-        taskId="rev_langgraph_zero_issue",
-        codeText="class snippet { int plus(int a, int b){ return a+b; } }",
-        language="java",
-        sourceType="snippet",
-        options={},
-        metadata={},
-    )
-    events = _collect_events(request)
-    event_types = [item["eventType"] for item in events]
-    assert "planner_started" not in event_types
-    assert "fixer_started" not in event_types
     assert event_types[-1] == "review_completed"
+    assert events[-1]["payload"]["result"]["summary"]["verified_level"] == "L1"

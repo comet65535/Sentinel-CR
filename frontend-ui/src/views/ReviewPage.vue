@@ -1,29 +1,30 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   createReviewEventSource,
   createReviewTask,
-  fetchReviewHistory,
+  fetchConversationMessages,
+  fetchConversations,
   fetchReviewTask,
 } from '../api/review'
 import ResultSummaryCard from '../components/ResultSummaryCard.vue'
 import ReviewForm from '../components/ReviewForm.vue'
 import ReviewSidebar from '../components/ReviewSidebar.vue'
 import StageDetailPanel from '../components/StageDetailPanel.vue'
-import type { ReviewEvent, ReviewHistoryItem, ReviewTaskStatus } from '../types/review'
+import type {
+  ConversationMessage,
+  ConversationSummary,
+  ReviewEvent,
+  ReviewTaskStatus,
+} from '../types/review'
 import {
   SSE_EVENT_TYPES,
-  buildConversationItems,
   buildReadableCurrentStatus,
   buildReadableStageTimeline,
   extractResultStats,
   toStatusText,
 } from '../utils/reviewEventView'
-import {
-  buildAccumulatedResult,
-  extractCompletedResult,
-  resolveResultByPriority,
-} from '../utils/reviewResult'
+import { buildAccumulatedResult, extractCompletedResult, resolveResultByPriority } from '../utils/reviewResult'
 
 const DEFAULT_SNIPPET = `class snippet {
     String greet(String name) {
@@ -35,14 +36,15 @@ const DEFAULT_SNIPPET = `class snippet {
 }`
 
 const code = ref(DEFAULT_SNIPPET)
-const submittedCode = ref('')
+const messageText = ref('')
 const taskId = ref('')
 const taskStatus = ref<'IDLE' | ReviewTaskStatus>('IDLE')
 const events = ref<ReviewEvent[]>([])
-const historyItems = ref<ReviewHistoryItem[]>([])
-const selectedHistoryTaskId = ref('')
-const loadingHistory = ref(false)
-const historyError = ref('')
+const conversations = ref<ConversationSummary[]>([])
+const messages = ref<ConversationMessage[]>([])
+const selectedConversationId = ref('')
+const loadingConversations = ref(false)
+const conversationError = ref('')
 const submitting = ref(false)
 const errorMessage = ref('')
 const debugMode = ref(false)
@@ -68,18 +70,7 @@ const currentStatusLine = computed(() =>
   buildReadableCurrentStatus(sortedEvents.value, reviewResult.value)
 )
 
-const conversationItems = computed(() =>
-  buildConversationItems(
-    sortedEvents.value,
-    reviewResult.value,
-    submittedCode.value,
-    currentStatusLine.value
-  )
-)
-
-const stageTimeline = computed(() =>
-  buildReadableStageTimeline(sortedEvents.value, reviewResult.value)
-)
+const stageTimeline = computed(() => buildReadableStageTimeline(sortedEvents.value, reviewResult.value))
 
 const resultStats = computed(() => {
   if (!reviewResult.value) {
@@ -104,13 +95,9 @@ const resultStats = computed(() => {
 })
 
 const patchContent = computed(() => {
-  if (!reviewResult.value) {
-    return ''
-  }
+  if (!reviewResult.value) return ''
   const patch = reviewResult.value.patch
-  if (typeof patch !== 'object' || patch === null) {
-    return ''
-  }
+  if (typeof patch !== 'object' || patch === null) return ''
   const patchRecord = patch as Record<string, unknown>
   if (typeof patchRecord.unified_diff === 'string' && patchRecord.unified_diff.trim()) {
     return patchRecord.unified_diff
@@ -157,6 +144,50 @@ const isProcessing = computed(() => {
   return reviewResult.value === null && events.value.length > 0
 })
 
+const conversationItems = computed(() => {
+  const items: Array<{
+    id: string
+    role: 'user' | 'assistant'
+    type: 'message' | 'status' | 'result'
+    title: string
+    text: string
+    code?: string
+  }> = []
+
+  for (const msg of messages.value) {
+    items.push({
+      id: msg.message_id,
+      role: msg.role,
+      type: 'message',
+      title: msg.role === 'user' ? '你' : 'Sentinel-CR',
+      text: msg.message_text || '',
+      code: msg.code_text || undefined,
+    })
+  }
+
+  if (isProcessing.value) {
+    items.push({
+      id: 'assistant-status',
+      role: 'assistant',
+      type: 'status',
+      title: 'Sentinel-CR',
+      text: currentStatusLine.value,
+    })
+  }
+
+  if (reviewResult.value) {
+    items.push({
+      id: 'assistant-result',
+      role: 'assistant',
+      type: 'result',
+      title: 'Sentinel-CR',
+      text: resultStats.value.userMessage !== '-' ? resultStats.value.userMessage : '任务已完成。',
+    })
+  }
+
+  return items
+})
+
 function isTaskFinished(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED'
 }
@@ -180,7 +211,10 @@ function upsertEvent(event: ReviewEvent) {
 
   if (isTaskFinished(event.status)) {
     closeEventSource()
-    void loadHistory()
+    void loadConversations()
+    if (selectedConversationId.value) {
+      void loadConversationMessages(selectedConversationId.value)
+    }
   }
 }
 
@@ -222,17 +256,6 @@ function subscribeEventStream(nextTaskId: string) {
       taskStatus.value = latestTask.status
       if (isTaskFinished(latestTask.status)) {
         closeEventSource()
-        if (!sortedEvents.value.some((item) => item.eventType === 'review_completed')) {
-          events.value.push({
-            taskId: nextTaskId,
-            eventType: 'review_completed',
-            message: '任务结束（通过详情查询补全结果）',
-            timestamp: new Date().toISOString(),
-            sequence: sortedEvents.value.length + 1,
-            status: latestTask.status,
-            payload: { result: (latestTask.result as Record<string, unknown>) ?? {} },
-          })
-        }
       } else {
         errorMessage.value = '事件流连接中断。'
       }
@@ -242,37 +265,44 @@ function subscribeEventStream(nextTaskId: string) {
   }
 }
 
-async function loadHistory() {
-  loadingHistory.value = true
-  historyError.value = ''
+async function loadConversations() {
+  loadingConversations.value = true
+  conversationError.value = ''
   try {
-    historyItems.value = await fetchReviewHistory(60)
+    conversations.value = await fetchConversations(60)
   } catch (error) {
-    historyError.value = error instanceof Error ? error.message : '历史任务加载失败。'
+    conversationError.value = error instanceof Error ? error.message : '会话加载失败。'
   } finally {
-    loadingHistory.value = false
+    loadingConversations.value = false
   }
 }
 
-async function openHistoryTask(historyTaskId: string) {
+async function loadConversationMessages(conversationId: string) {
+  try {
+    messages.value = await fetchConversationMessages(conversationId, 500)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '消息加载失败。'
+  }
+}
+
+async function openConversation(conversationId: string) {
   closeEventSource()
   errorMessage.value = ''
   detailPanelOpen.value = false
-  selectedHistoryTaskId.value = historyTaskId
+  selectedConversationId.value = conversationId
   events.value = []
-  taskId.value = historyTaskId
+  taskId.value = ''
+  taskStatus.value = 'IDLE'
 
-  const historyItem = historyItems.value.find((item) => item.task_id === historyTaskId)
-  if (historyItem) {
-    taskStatus.value = historyItem.status
-  }
-
-  try {
-    const detail = await fetchReviewTask(historyTaskId)
+  await loadConversationMessages(conversationId)
+  const latestTaskId = conversations.value.find((item) => item.conversation_id === conversationId)?.latest_task_id
+  if (latestTaskId) {
+    taskId.value = latestTaskId
+    const detail = await fetchReviewTask(latestTaskId)
     taskStatus.value = detail.status
     events.value = [
       {
-        taskId: historyTaskId,
+        taskId: latestTaskId,
         eventType: 'review_completed',
         message: '历史任务结果',
         timestamp: new Date().toISOString(),
@@ -281,58 +311,62 @@ async function openHistoryTask(historyTaskId: string) {
         payload: { result: (detail.result as Record<string, unknown>) ?? {} },
       },
     ]
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '历史任务详情加载失败。'
   }
 }
 
 async function submitReview() {
-  if (!code.value.trim()) {
-    errorMessage.value = '代码输入不能为空。'
+  if (!messageText.value.trim() && !code.value.trim()) {
+    errorMessage.value = '请输入约束说明或代码。'
     return
   }
 
   submitting.value = true
   errorMessage.value = ''
-  events.value = []
-  taskId.value = ''
-  taskStatus.value = 'IDLE'
   detailPanelOpen.value = false
-  submittedCode.value = code.value
-  selectedHistoryTaskId.value = ''
   closeEventSource()
+
+  const sendingMessage = messageText.value
+  const sendingCode = code.value
 
   try {
     const response = await createReviewTask({
-      codeText: code.value,
+      conversationId: selectedConversationId.value || undefined,
+      messageText: sendingMessage || undefined,
+      codeText: sendingCode.trim() ? sendingCode : undefined,
       language: 'java',
       sourceType: 'snippet',
       options: {
         enable_verifier: true,
-        enable_mcp: false,
+        enable_mcp: true,
         max_retries: 2,
-        enable_security_rescan: false,
+        enable_security_rescan: true,
         debug: debugMode.value,
         context_policy: 'lazy',
         context_budget_tokens: 12000,
-        persist_verified_case: false,
+        persist_verified_case: true,
+        llm_enabled: true,
+        llm_provider: import.meta.env.VITE_LLM_PROVIDER || 'deepseek',
+        llm_model: import.meta.env.VITE_LLM_MODEL || 'deepseek-chat',
+        llm_tool_mode: import.meta.env.VITE_LLM_TOOL_MODE || 'auto',
       },
       metadata: {
         requested_by: 'frontend-ui',
         debug_mode: debugMode.value,
       },
     })
+
     taskId.value = response.taskId
     taskStatus.value = response.status
-    selectedHistoryTaskId.value = response.taskId
+    selectedConversationId.value = response.conversationId
+
+    messageText.value = ''
+    code.value = ''
+
+    await loadConversations()
+    await loadConversationMessages(response.conversationId)
     subscribeEventStream(response.taskId)
-    await loadHistory()
   } catch (error) {
-    if (error instanceof Error) {
-      errorMessage.value = error.message
-    } else {
-      errorMessage.value = '请求失败。'
-    }
+    errorMessage.value = error instanceof Error ? error.message : '请求失败。'
   } finally {
     submitting.value = false
   }
@@ -353,12 +387,14 @@ function startNewAnalysis() {
   taskStatus.value = 'IDLE'
   errorMessage.value = ''
   detailPanelOpen.value = false
-  submittedCode.value = ''
-  selectedHistoryTaskId.value = ''
+  selectedConversationId.value = ''
+  messageText.value = ''
+  code.value = DEFAULT_SNIPPET
+  messages.value = []
 }
 
 onMounted(() => {
-  void loadHistory()
+  void loadConversations()
 })
 
 onBeforeUnmount(() => {
@@ -371,12 +407,12 @@ onBeforeUnmount(() => {
     <ReviewSidebar
       :task-id="taskId"
       :task-status="taskStatus"
-      :history-items="historyItems"
-      :selected-history-task-id="selectedHistoryTaskId"
-      :loading-history="loadingHistory"
-      :history-error="historyError"
+      :conversations="conversations"
+      :selected-conversation-id="selectedConversationId"
+      :loading-conversations="loadingConversations"
+      :conversation-error="conversationError"
       @new-analysis="startNewAnalysis"
-      @select-history="openHistoryTask"
+      @select-conversation="openConversation"
     />
 
     <section class="chat-column">
@@ -398,7 +434,7 @@ onBeforeUnmount(() => {
           </label>
         </div>
 
-        <div class="metric-row">
+        <div v-if="debugMode" class="metric-row">
           <span class="metric-chip">verified: {{ liveMetrics.verifiedLevel }}</span>
           <span class="metric-chip">failure: {{ liveMetrics.failureBucket }}</span>
           <span class="metric-chip">context used: {{ liveMetrics.contextUsed }}</span>
@@ -409,7 +445,7 @@ onBeforeUnmount(() => {
 
       <section class="chat-thread">
         <div v-if="conversationItems.length === 0" class="empty">
-          <p>把 Java 代码发给我，我会先分析，再给出补丁与验证结果。</p>
+          <p>发送代码和要求开始修复，后续可在同一会话继续追问。</p>
         </div>
 
         <article
@@ -444,7 +480,12 @@ onBeforeUnmount(() => {
       </section>
 
       <footer class="composer-wrap">
-        <ReviewForm v-model:code="code" :submitting="submitting" @submit="submitReview" />
+        <ReviewForm
+          v-model:message="messageText"
+          v-model:code="code"
+          :submitting="submitting"
+          @submit="submitReview"
+        />
       </footer>
     </section>
 

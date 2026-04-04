@@ -8,6 +8,10 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class ReviewTask {
     private final String taskId;
+    private final String conversationId;
+    private final String messageId;
+    private final String parentMessageId;
+    private final String messageText;
     private final String codeText;
     private final String language;
     private final String sourceType;
@@ -22,15 +26,19 @@ public class ReviewTask {
     private volatile String errorMessage;
 
     public ReviewTask(String taskId, String codeText, String language, String sourceType) {
-        this(taskId, codeText, language, sourceType, Map.of(), Map.of());
+        this(taskId, null, null, null, null, codeText, language, sourceType, Map.of(), Map.of());
     }
 
     public ReviewTask(String taskId, String codeText, String language, String sourceType, Map<String, Object> options) {
-        this(taskId, codeText, language, sourceType, options, Map.of());
+        this(taskId, null, null, null, null, codeText, language, sourceType, options, Map.of());
     }
 
     public ReviewTask(
             String taskId,
+            String conversationId,
+            String messageId,
+            String parentMessageId,
+            String messageText,
             String codeText,
             String language,
             String sourceType,
@@ -38,6 +46,10 @@ public class ReviewTask {
             Map<String, Object> metadata) {
         Instant now = Instant.now();
         this.taskId = taskId;
+        this.conversationId = conversationId;
+        this.messageId = messageId;
+        this.parentMessageId = parentMessageId;
+        this.messageText = messageText;
         this.codeText = codeText;
         this.language = language;
         this.sourceType = sourceType;
@@ -73,6 +85,22 @@ public class ReviewTask {
 
     public String getTaskId() {
         return taskId;
+    }
+
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public String getMessageId() {
+        return messageId;
+    }
+
+    public String getParentMessageId() {
+        return parentMessageId;
+    }
+
+    public String getMessageText() {
+        return messageText;
     }
 
     public String getCodeText() {

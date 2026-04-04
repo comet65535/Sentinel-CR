@@ -86,6 +86,7 @@ export interface ReviewResult {
   repair_plan: Record<string, unknown>[]
   planner_summary: Record<string, unknown>
   memory: ReviewMemory
+  memory_hits?: Record<string, unknown>
   context_budget: ContextBudget
   selected_context: Record<string, unknown>[]
   tool_trace: ToolTraceItem[]
@@ -97,7 +98,11 @@ export interface ReviewResult {
 }
 
 export interface CreateReviewRequest {
-  codeText: string
+  codeText?: string
+  messageText?: string
+  conversationId?: string
+  messageId?: string
+  parentMessageId?: string
   language: 'java'
   sourceType: 'snippet'
   options?: {
@@ -109,18 +114,27 @@ export interface CreateReviewRequest {
     context_policy?: 'none' | 'lazy'
     context_budget_tokens?: number
     persist_verified_case?: boolean
+    llm_enabled?: boolean
+    llm_provider?: string
+    llm_model?: string
+    llm_tool_mode?: string
   }
   metadata?: Record<string, unknown>
 }
 
 export interface CreateReviewResponse {
   taskId: string
+  conversationId: string
+  messageId: string
   status: ReviewTaskStatus
   message: string
 }
 
 export interface ReviewTask {
   taskId: string
+  conversationId?: string
+  messageId?: string
+  parentMessageId?: string
   status: ReviewTaskStatus
   createdAt: string
   updatedAt: string
@@ -140,6 +154,8 @@ export interface ReviewEvent {
 
 export interface ReviewHistoryItem {
   task_id: string
+  conversation_id?: string
+  message_id?: string
   status: ReviewTaskStatus
   created_at: string
   updated_at: string
@@ -153,4 +169,24 @@ export interface ReviewHistoryItem {
     }
   }
   has_patch: boolean
+}
+
+export interface ConversationSummary {
+  conversation_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  latest_message?: string
+  latest_task_id?: string
+}
+
+export interface ConversationMessage {
+  message_id: string
+  conversation_id: string
+  parent_message_id?: string
+  role: 'user' | 'assistant'
+  message_text?: string
+  code_text?: string
+  task_id?: string
+  created_at: string
 }

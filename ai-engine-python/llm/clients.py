@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,7 @@ class LlmCallResult:
     error: str | None
     raw: dict[str, Any] | None
     trace: dict[str, Any]
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 class OpenAICompatibleClient:
@@ -48,6 +49,7 @@ class OpenAICompatibleClient:
         stream: bool = False,
         json_mode: bool | None = None,
         tool_mode: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
         extra_payload: dict[str, Any] | None = None,
     ) -> LlmCallResult:
         request_json_mode = self.default_json_mode if json_mode is None else json_mode
@@ -61,6 +63,8 @@ class OpenAICompatibleClient:
             payload["response_format"] = {"type": "json_object"}
         if request_tool_mode and request_tool_mode != "off":
             payload["tool_choice"] = request_tool_mode
+            if tools:
+                payload["tools"] = tools
         if extra_payload:
             payload.update(extra_payload)
 
@@ -74,6 +78,7 @@ class OpenAICompatibleClient:
         error: str | None = None
         content = ""
         usage: dict[str, Any] = {}
+        tool_calls: list[dict[str, Any]] = []
         try:
             with httpx.Client(timeout=self.timeout_ms / 1000.0) as client:
                 response = client.post(url, headers=headers, json=payload)
@@ -85,6 +90,7 @@ class OpenAICompatibleClient:
                     raw_response = response.json()
                     content = _extract_message_content(raw_response)
                     usage = dict(raw_response.get("usage") or {})
+                    tool_calls = _extract_tool_calls(raw_response)
         except Exception as exc:
             error = str(exc)
 
@@ -111,31 +117,81 @@ class OpenAICompatibleClient:
             "latency_ms": latency_ms,
             "json_mode": bool(request_json_mode),
             "tool_mode": request_tool_mode,
+            "tool_call_count": len(tool_calls),
             "cache_hit_tokens": cache_hit_tokens,
             "cache_miss_tokens": cache_miss_tokens,
         }
 
-        return LlmCallResult(ok=error is None and bool(content.strip()), content=content, error=error, raw=raw_response, trace=trace)
+        return LlmCallResult(
+            ok=error is None and (bool(content.strip()) or bool(tool_calls)),
+            content=content,
+            error=error,
+            raw=raw_response,
+            trace=trace,
+            tool_calls=tool_calls,
+        )
 
 
 def build_llm_client(options: dict[str, Any] | None = None) -> OpenAICompatibleClient | None:
     options = options or {}
-    if not bool(options.get("llm_enabled", False)):
+    env = _load_runtime_env()
+    llm_enabled = options.get("llm_enabled")
+    if llm_enabled is None:
+        has_env_key = any(
+            str(env.get(key) or "").strip()
+            for key in ("SENTINEL_LLM_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY")
+        )
+        has_option_key = bool(str(options.get("llm_api_key") or "").strip())
+        llm_enabled = has_env_key or has_option_key
+    if not _to_bool(llm_enabled, default=False):
         return None
 
-    env = _load_runtime_env()
-    provider = str(options.get("llm_provider") or env.get("LLM_PROVIDER") or "deepseek").strip().lower()
-    model = str(options.get("llm_model") or env.get("LLM_MODEL") or "deepseek-chat").strip()
+    provider = str(
+        options.get("llm_provider")
+        or env.get("SENTINEL_LLM_PROVIDER")
+        or env.get("LLM_PROVIDER")
+        or "deepseek"
+    ).strip().lower()
+    model = str(
+        options.get("llm_model")
+        or env.get("SENTINEL_LLM_MODEL")
+        or env.get("LLM_MODEL")
+        or "deepseek-chat"
+    ).strip()
     timeout_ms = _safe_int(options.get("llm_timeout_ms"), default=60000)
     json_mode = _to_bool(options.get("llm_json_mode"), default=True)
     tool_mode = str(options.get("llm_tool_mode") or "off").strip().lower() or "off"
 
     if provider == "deepseek":
-        base_url = str(options.get("llm_base_url") or env.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
-        api_key = str(options.get("llm_api_key") or env.get("DEEPSEEK_API_KEY") or "").strip()
+        base_url = str(
+            options.get("llm_base_url")
+            or env.get("SENTINEL_LLM_BASE_URL")
+            or env.get("DEEPSEEK_BASE_URL")
+            or "https://api.deepseek.com/v1"
+        ).strip()
+        if "llm_api_key" in options and options.get("llm_api_key") is not None:
+            api_key = str(options.get("llm_api_key")).strip()
+        else:
+            api_key = str(
+                env.get("SENTINEL_LLM_API_KEY")
+                or env.get("DEEPSEEK_API_KEY")
+                or ""
+            ).strip()
     else:
-        base_url = str(options.get("llm_base_url") or env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
-        api_key = str(options.get("llm_api_key") or env.get("OPENAI_API_KEY") or "").strip()
+        base_url = str(
+            options.get("llm_base_url")
+            or env.get("SENTINEL_LLM_BASE_URL")
+            or env.get("OPENAI_BASE_URL")
+            or "https://api.openai.com/v1"
+        ).strip()
+        if "llm_api_key" in options and options.get("llm_api_key") is not None:
+            api_key = str(options.get("llm_api_key")).strip()
+        else:
+            api_key = str(
+                env.get("SENTINEL_LLM_API_KEY")
+                or env.get("OPENAI_API_KEY")
+                or ""
+            ).strip()
 
     if not api_key:
         return None
@@ -192,6 +248,19 @@ def _parse_stream_content(raw_text: str) -> str:
         if isinstance(text, str):
             content_parts.append(text)
     return "".join(content_parts)
+
+
+def _extract_tool_calls(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    choices = payload.get("choices") or []
+    if not choices:
+        return []
+    message = choices[0].get("message") or {}
+    raw_calls = message.get("tool_calls") or []
+    calls: list[dict[str, Any]] = []
+    for item in raw_calls:
+        if isinstance(item, dict):
+            calls.append(item)
+    return calls
 
 
 def _load_runtime_env() -> dict[str, str]:

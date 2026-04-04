@@ -46,6 +46,8 @@ class ReviewApiIntegrationTests {
 
         assertThat(createResponse).isNotNull();
         assertThat(createResponse.taskId()).isNotBlank();
+        assertThat(createResponse.conversationId()).isNotBlank();
+        assertThat(createResponse.messageId()).isNotBlank();
 
         FluxExchangeResult<ReviewEvent> streamResult = webTestClient.get()
                 .uri("/api/reviews/{taskId}/events", createResponse.taskId())
@@ -103,6 +105,7 @@ class ReviewApiIntegrationTests {
 
         assertThat(createResponse).isNotNull();
         assertThat(createResponse.taskId()).isNotBlank();
+        assertThat(createResponse.conversationId()).isNotBlank();
 
         Thread.sleep(3500);
 
@@ -159,6 +162,8 @@ class ReviewApiIntegrationTests {
         Map<String, Object> item = (Map<String, Object>) historyItems.get(0);
         assertThat(item).containsKeys(
                 "task_id",
+                "conversation_id",
+                "message_id",
                 "status",
                 "created_at",
                 "updated_at",
@@ -171,5 +176,60 @@ class ReviewApiIntegrationTests {
         Map<String, Object> summary = (Map<String, Object>) item.get("summary");
         assertThat(summary).containsKeys("final_status", "verified_level", "failure_taxonomy");
         assertThat(summary.get("failure_taxonomy")).isInstanceOf(Map.class);
+    }
+
+    @Test
+    void shouldSupportFollowUpWithoutCodeByReusingThreadStateCode() {
+        WebTestClient webTestClient = WebTestClient.bindToServer()
+                .baseUrl("http://localhost:" + serverPort)
+                .responseTimeout(Duration.ofSeconds(10))
+                .build();
+
+        CreateReviewResponse firstResponse = webTestClient.post()
+                .uri("/api/reviews")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "codeText", "public class FollowUpDemo { void run() {} }",
+                        "messageText", "first round",
+                        "language", "java",
+                        "sourceType", "snippet"))
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody(CreateReviewResponse.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertThat(firstResponse).isNotNull();
+        assertThat(firstResponse.conversationId()).isNotBlank();
+
+        CreateReviewResponse secondResponse = webTestClient.post()
+                .uri("/api/reviews")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of(
+                        "conversationId", firstResponse.conversationId(),
+                        "messageText", "follow-up without code",
+                        "language", "java",
+                        "sourceType", "snippet"))
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody(CreateReviewResponse.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertThat(secondResponse).isNotNull();
+        assertThat(secondResponse.conversationId()).isEqualTo(firstResponse.conversationId());
+
+        List<Map> messages = webTestClient.get()
+                .uri("/api/reviews/conversations/{conversationId}/messages?limit=50", firstResponse.conversationId())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBodyList(Map.class)
+                .returnResult()
+                .getResponseBody();
+        assertThat(messages).isNotNull();
+        assertThat(messages).isNotEmpty();
     }
 }

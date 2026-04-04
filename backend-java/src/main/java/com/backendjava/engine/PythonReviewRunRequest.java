@@ -4,6 +4,10 @@ import java.util.Map;
 
 public record PythonReviewRunRequest(
         String taskId,
+        String conversationId,
+        String messageId,
+        String parentMessageId,
+        String messageText,
         String codeText,
         String language,
         String sourceType,

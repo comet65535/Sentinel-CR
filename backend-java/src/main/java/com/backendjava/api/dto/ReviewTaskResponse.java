@@ -6,6 +6,9 @@ import java.util.Map;
 
 public record ReviewTaskResponse(
         String taskId,
+        String conversationId,
+        String messageId,
+        String parentMessageId,
         ReviewTaskStatus status,
         Instant createdAt,
         Instant updatedAt,

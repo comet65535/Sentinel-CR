@@ -5,6 +5,8 @@ import java.time.Instant;
 
 public record ReviewHistoryItemResponse(
         @JsonProperty("task_id") String taskId,
+        @JsonProperty("conversation_id") String conversationId,
+        @JsonProperty("message_id") String messageId,
         @JsonProperty("status") String status,
         @JsonProperty("created_at") Instant createdAt,
         @JsonProperty("updated_at") Instant updatedAt,

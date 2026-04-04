@@ -1,4 +1,6 @@
 import type {
+  ConversationMessage,
+  ConversationSummary,
   CreateReviewRequest,
   CreateReviewResponse,
   ReviewHistoryItem,
@@ -63,6 +65,33 @@ export async function fetchReviewHistory(limit = 50): Promise<ReviewHistoryItem[
   }
 
   return (await response.json()) as ReviewHistoryItem[]
+}
+
+export async function fetchConversations(limit = 50): Promise<ConversationSummary[]> {
+  const response = await fetch(
+    buildApiUrl(`/api/reviews/conversations?limit=${encodeURIComponent(String(limit))}`)
+  )
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, 'Failed to load conversations'))
+  }
+  return (await response.json()) as ConversationSummary[]
+}
+
+export async function fetchConversationMessages(
+  conversationId: string,
+  limit = 500
+): Promise<ConversationMessage[]> {
+  const response = await fetch(
+    buildApiUrl(
+      `/api/reviews/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages?limit=${encodeURIComponent(String(limit))}`
+    )
+  )
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, 'Failed to load conversation messages'))
+  }
+  return (await response.json()) as ConversationMessage[]
 }
 
 export function createReviewEventSource(taskId: string): EventSource {

@@ -16,8 +16,9 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     case_store_summary = dict(state.case_store_summary or {})
     context_budget = dict(state.context_budget or {})
     selected_context = list(state.selected_context or [])
+    memory_hits = dict(state.memory_hits or {})
     tool_trace = list(state.tool_trace or [])
-    llm_trace = _extract_llm_trace(state.options)
+    llm_trace = list(state.llm_trace or []) or _extract_llm_trace(state.options)
 
     verification_result = _sanitize_verification(state.verification_result)
     verified_level = str((verification_result or {}).get("verified_level") or "L0")
@@ -86,6 +87,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "repair_plan": state.repair_plan,
         "planner_summary": state.planner_summary,
         "memory": {"matches": memory_matches},
+        "memory_hits": memory_hits,
         "context_budget": context_budget,
         "selected_context": selected_context,
         "tool_trace": tool_trace,
@@ -119,6 +121,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "repair_plan": state.repair_plan,
         "planner_summary": state.planner_summary,
         "memory": result_block["memory"],
+        "memory_hits": memory_hits,
         "context_budget": context_budget,
         "selected_context": selected_context,
         "tool_trace": tool_trace,
@@ -345,41 +348,22 @@ def _build_user_message(
     if no_fix_needed:
         return "Code is healthy. No fix is needed."
     if final_outcome == "verified_patch":
-        if strategy_used == "semantic_compile_fix":
-            return "Semantic compile repair completed and compile verification passed."
         if has_syntax_issues:
-            return "Syntax repair completed and compile verification passed."
+            return "Patch verified and syntax issues are resolved."
         return "Patch verified at L1 or above."
     if final_outcome == "patch_generated_unverified":
         return "Patch generated. Verifier was not executed."
     if final_outcome == "failed_no_patch":
+        if failure_reason == "llm_not_enabled_or_missing_credentials":
+            return "LLM disabled or missing credentials. Configure provider and API key before retrying."
         if failure_reason == "duplicate_patch_candidate":
-            return "Syntax repair retry stopped because the new patch duplicated the previous attempt."
-        if failure_reason == "unsupported_syntax_repair":
-            return "Current syntax issue pattern is not supported by deterministic syntax repair."
-        if failure_reason == "no_repair_candidate":
-            return "Syntax repair could not produce a valid patch candidate."
-        if failure_reason == "syntax_repair_failed":
-            return "Syntax repair failed to build a valid patch."
-        if failure_reason == "semantic_repair_unsupported":
-            return "Current compile-semantic failure is not supported by deterministic semantic repair."
-        if failure_reason == "insufficient_context_for_semantic_fix":
-            return "Semantic compile repair needs more context before generating a safe patch."
-        if failure_reason == "unsafe_default_return":
-            return "Semantic compile repair stopped because a safe default return could not be inferred."
-        if failure_reason == "no_semantic_candidate":
-            return "Semantic compile repair could not produce a valid patch candidate."
+            return "Retry stopped because the generated patch duplicated the previous attempt."
         if has_syntax_issues:
             return "Analyzer detected syntax issues. Please fix syntax errors before retrying."
         return "No valid patch was generated."
     if final_outcome == "failed_after_retries":
         if failure_reason == "compile_failed_after_repair":
-            return (
-                f"Syntax repair patch still failed to compile after {retry_count} retries; "
-                "retry budget is exhausted."
-            )
-        if failure_reason in {"semantic_repair_unsupported", "insufficient_context_for_semantic_fix", "no_semantic_candidate"}:
-            return "Semantic compile repair failed and retry budget was exhausted."
+            return f"Patch still failed compile checks after {retry_count} retries."
         stage_text = failed_stage or "verifier"
         reason_suffix = f" Latest error: {failure_reason}." if failure_reason else ""
         if retry_exhausted:

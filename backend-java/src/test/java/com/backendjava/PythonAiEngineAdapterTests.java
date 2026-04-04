@@ -57,10 +57,21 @@ class PythonAiEngineAdapterTests {
             PythonAiEngineAdapter adapter = new PythonAiEngineAdapter(properties, new EngineEventMapper());
             ReviewTask task = new ReviewTask(
                     "rev_test_001",
+                    "conv_test_001",
+                    "msg_test_001",
+                    null,
+                    "fix this snippet",
                     "public class Demo {}",
                     "java",
                     "snippet",
-                    Map.of("enable_verifier", true, "enable_mcp", true, "max_retries", 2),
+                    Map.of(
+                            "enable_verifier", true,
+                            "enable_mcp", true,
+                            "max_retries", 2,
+                            "llm_enabled", true,
+                            "llm_provider", "deepseek",
+                            "llm_model", "deepseek-chat",
+                            "llm_tool_mode", "auto"),
                     Map.of("requested_by", "backend-java-test", "debug_mode", true));
 
             List<EngineEvent> events =
@@ -77,6 +88,12 @@ class PythonAiEngineAdapterTests {
             assertThat(capturedBody.get()).contains("\"enable_verifier\":true");
             assertThat(capturedBody.get()).contains("\"enable_mcp\":true");
             assertThat(capturedBody.get()).contains("\"max_retries\":2");
+            assertThat(capturedBody.get()).contains("\"llm_enabled\":true");
+            assertThat(capturedBody.get()).contains("\"llm_provider\":\"deepseek\"");
+            assertThat(capturedBody.get()).contains("\"llm_model\":\"deepseek-chat\"");
+            assertThat(capturedBody.get()).contains("\"llm_tool_mode\":\"auto\"");
+            assertThat(capturedBody.get()).contains("\"conversationId\":\"conv_test_001\"");
+            assertThat(capturedBody.get()).contains("\"messageId\":\"msg_test_001\"");
             assertThat(capturedBody.get()).contains("\"metadata\"");
             assertThat(capturedBody.get()).contains("\"requested_by\":\"backend-java-test\"");
             assertThat(capturedBody.get()).contains("\"debug_mode\":true");

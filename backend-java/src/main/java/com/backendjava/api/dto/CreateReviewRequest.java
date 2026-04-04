@@ -1,11 +1,14 @@
 package com.backendjava.api.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import java.util.Map;
+import jakarta.validation.constraints.NotBlank;
 
 public class CreateReviewRequest {
-    @NotBlank
     private String codeText;
+    private String messageText;
+    private String conversationId;
+    private String messageId;
+    private String parentMessageId;
 
     @NotBlank
     private String language;
@@ -21,6 +24,38 @@ public class CreateReviewRequest {
 
     public void setCodeText(String codeText) {
         this.codeText = codeText;
+    }
+
+    public String getMessageText() {
+        return messageText;
+    }
+
+    public void setMessageText(String messageText) {
+        this.messageText = messageText;
+    }
+
+    public String getConversationId() {
+        return conversationId;
+    }
+
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
+
+    public String getMessageId() {
+        return messageId;
+    }
+
+    public void setMessageId(String messageId) {
+        this.messageId = messageId;
+    }
+
+    public String getParentMessageId() {
+        return parentMessageId;
+    }
+
+    public void setParentMessageId(String parentMessageId) {
+        this.parentMessageId = parentMessageId;
     }
 
     public String getLanguage() {

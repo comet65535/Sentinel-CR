@@ -9,6 +9,10 @@ class InternalReviewRunRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     task_id: str = Field(alias="taskId")
+    conversation_id: str | None = Field(default=None, alias="conversationId")
+    message_id: str | None = Field(default=None, alias="messageId")
+    parent_message_id: str | None = Field(default=None, alias="parentMessageId")
+    message_text: str | None = Field(default=None, alias="messageText")
     code_text: str = Field(alias="codeText")
     language: str
     source_type: str = Field(alias="sourceType")
@@ -47,6 +51,10 @@ def default_planner_summary() -> dict[str, int]:
 
 class EngineState(BaseModel):
     task_id: str
+    conversation_id: str | None = None
+    message_id: str | None = None
+    parent_message_id: str | None = None
+    message_text: str | None = None
     code_text: str
     language: str
     issues: list[dict[str, Any]] = Field(default_factory=list)
@@ -67,7 +75,10 @@ class EngineState(BaseModel):
     verification_result: dict[str, Any] | None = None
     context_budget: dict[str, Any] = Field(default_factory=dict)
     selected_context: list[dict[str, Any]] = Field(default_factory=list)
+    memory_hits: dict[str, Any] = Field(default_factory=dict)
     tool_trace: list[dict[str, Any]] = Field(default_factory=list)
+    llm_trace: list[dict[str, Any]] = Field(default_factory=list)
+    action_history: list[dict[str, Any]] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     debug_enabled: bool = False

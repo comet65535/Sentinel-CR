@@ -1,20 +1,20 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
-import type { ReviewHistoryItem, ReviewTaskStatus } from '../types/review'
+import type { ConversationSummary, ReviewTaskStatus } from '../types/review'
 import { toStatusText } from '../utils/reviewEventView'
 
 const props = defineProps<{
   taskId: string
   taskStatus: 'IDLE' | ReviewTaskStatus
-  historyItems: ReviewHistoryItem[]
-  selectedHistoryTaskId: string
-  loadingHistory: boolean
-  historyError: string
+  conversations: ConversationSummary[]
+  selectedConversationId: string
+  loadingConversations: boolean
+  conversationError: string
 }>()
 
 const emit = defineEmits<{
   (event: 'new-analysis'): void
-  (event: 'select-history', taskId: string): void
+  (event: 'select-conversation', conversationId: string): void
 }>()
 
 const taskLabel = computed(() => {
@@ -22,30 +22,30 @@ const taskLabel = computed(() => {
   return `${props.taskId} · ${toStatusText(props.taskStatus)}`
 })
 
-function formatSubtitle(item: ReviewHistoryItem): string {
+function formatSubtitle(item: ConversationSummary): string {
   const time = item.updated_at?.replace('T', ' ').slice(0, 16) || '-'
-  return `${item.summary.verified_level} · ${item.summary.failure_taxonomy.bucket} · ${time}`
+  return `${time}`
 }
 </script>
 
 <template>
   <aside class="sidebar">
-    <button class="new-chat" type="button" @click="emit('new-analysis')">+ 新建分析</button>
+    <button class="new-chat" type="button" @click="emit('new-analysis')">+ 新建会话</button>
 
     <div class="section">
-      <p class="section-title">历史会话</p>
-      <p v-if="loadingHistory" class="empty-note">正在加载历史任务...</p>
-      <p v-else-if="historyError" class="error-note">{{ historyError }}</p>
-      <p v-else-if="historyItems.length === 0" class="empty-note">暂无历史任务。</p>
+      <p class="section-title">会话历史</p>
+      <p v-if="loadingConversations" class="empty-note">正在加载会话...</p>
+      <p v-else-if="conversationError" class="error-note">{{ conversationError }}</p>
+      <p v-else-if="conversations.length === 0" class="empty-note">暂无历史会话。</p>
       <button
-        v-for="item in historyItems"
-        :key="item.task_id"
+        v-for="item in conversations"
+        :key="item.conversation_id"
         class="history-item"
-        :class="{ active: selectedHistoryTaskId === item.task_id }"
+        :class="{ active: selectedConversationId === item.conversation_id }"
         type="button"
-        @click="emit('select-history', item.task_id)"
+        @click="emit('select-conversation', item.conversation_id)"
       >
-        <span class="history-title">{{ item.title || item.task_id }}</span>
+        <span class="history-title">{{ item.title || item.conversation_id }}</span>
         <span class="history-subtitle">{{ formatSubtitle(item) }}</span>
       </button>
     </div>

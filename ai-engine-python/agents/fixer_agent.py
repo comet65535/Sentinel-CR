@@ -1,24 +1,19 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import json
 import hashlib
-import re
-from typing import Any
+import json
+import time
+from typing import Any, Callable
 
-from core.failure_taxonomy import classify_compile_failure_bucket
+from agents.planner_agent import run_planner_agent
+from analyzers import build_symbol_graph, compose_day2_output, parse_java_code, run_semgrep
+from core.issue_graph import build_issue_graph
 from llm import build_llm_client
-from memory import resolve_default_target_file
-from prompts import build_fixer_messages, build_fixer_prompt_payload, build_verifier_reflect_payload
-from tools.semantic_repair import build_semantic_repair_patch, propose_semantic_repair_candidates
-from tools.syntax_repair import build_unified_diff_from_repaired_code, propose_syntax_repair_candidates
+from memory import retrieve_case_matches, search_standards
+from prompts import build_fixer_messages, build_fixer_prompt_payload
+from tools import apply_patch_to_snippet, compile_java_snippet, run_lint_stage, run_security_rescan_stage, run_test_stage
 
-SEMANTIC_BUCKETS = {
-    "missing_return",
-    "incomplete_return_paths",
-    "uninitialized_local",
-    "simple_type_mismatch",
-}
-LLM_STRATEGY_VALUES = {"case_adapt", "semantic_template_fix", "llm_generation"}
+MAX_ACTION_STEPS = 3
 
 
 def run_fixer_agent(
@@ -34,788 +29,600 @@ def run_fixer_agent(
     selected_context: list[dict[str, Any]] | None = None,
     repo_profile: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
+    message_text: str | None = None,
+    action_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     options = options or {}
-    selected_context = selected_context or []
-    repo_profile = repo_profile or {}
+    selected_context = list(selected_context or [])
+    repo_profile = dict(repo_profile or {})
+    action_history = list(action_history or [])
+    last_failure = dict(last_failure or {})
 
-    patch_id = f"patch_attempt_{attempt_no}"
-    prompt_payload = build_fixer_prompt_payload(
-        repair_plan=repair_plan,
-        issues=issues,
-        symbols=symbols,
-        context_summary=context_summary,
-        memory_matches=memory_matches,
-        attempt_no=attempt_no,
-        selected_context=selected_context,
-        last_failure=last_failure,
-    )
-
-    target_file = _resolve_target_file(issues)
-    primary_strategy = _resolve_primary_strategy(repair_plan, issues)
-    memory_case_ids = [str(item.get("case_id")) for item in memory_matches if item.get("case_id")]
-    llm_trace: list[dict[str, Any]] = []
-
-    if primary_strategy == "syntax_fix":
-        syntax_patch = _build_syntax_fix_patch(
-            code_text=code_text,
+    llm_client = build_llm_client(options)
+    if llm_client is None:
+        return _failed_output(
+            attempt_no=attempt_no,
+            reason="llm_not_enabled_or_missing_credentials",
+            detail="LLM disabled or missing credentials. Configure SENTINEL_LLM_* or request llm_enabled=true.",
+            llm_trace=[],
+            tool_trace=[],
+            selected_context=selected_context,
+            memory_hits={"cases": memory_matches, "standards": []},
             issues=issues,
-            last_failure=last_failure,
-            target_file=target_file,
+            symbols=symbols,
+            context_summary=context_summary,
+            repair_plan=repair_plan,
+            issue_graph={"schema_version": "day3.v1", "nodes": [], "edges": []},
+            planner_summary={},
+            action_history=action_history,
         )
-        if not syntax_patch["ok"]:
-            failure_reason = str(syntax_patch.get("reason") or "syntax_repair_failed")
-            failure_detail = str(syntax_patch.get("detail") or "syntax repair did not produce a patch")
-            attempt = _build_attempt_record(
+
+    state = {
+        "code_text": code_text,
+        "issues": list(issues),
+        "symbols": list(symbols),
+        "context_summary": dict(context_summary),
+        "repair_plan": list(repair_plan),
+        "issue_graph": {"schema_version": "day3.v1", "nodes": [], "edges": []},
+        "planner_summary": {},
+        "memory_matches": list(memory_matches),
+        "standards_matches": _load_standards(code_text, message_text, issues),
+        "selected_context": selected_context,
+        "repo_profile": repo_profile,
+        "last_failure": last_failure,
+    }
+
+    llm_trace: list[dict[str, Any]] = []
+    tool_trace: list[dict[str, Any]] = []
+    prompt_history = list(action_history)
+
+    tool_handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+        "analyze_ast": lambda args: _tool_analyze_ast(state),
+        "run_semgrep": lambda args: _tool_run_semgrep(state),
+        "build_issue_graph": lambda args: _tool_build_issue_graph(state),
+        "resolve_symbol": lambda args: _tool_resolve_symbol(state, args),
+        "fetch_context": lambda args: _tool_fetch_context(state, args),
+        "get_repo_profile": lambda args: _tool_get_repo_profile(state),
+        "search_case_memory": lambda args: _tool_search_case_memory(state),
+        "search_short_term_memory": lambda args: _tool_search_short_term_memory(state),
+        "apply_patch": lambda args: _tool_apply_patch(state, args),
+        "compile_java": lambda args: _tool_compile_java(state, args),
+        "lint_java": lambda args: _tool_lint_java(state, args, options),
+        "run_tests": lambda args: _tool_run_tests(state, args, options),
+        "security_rescan": lambda args: _tool_security_rescan(state, args, options),
+    }
+
+    for step_no in range(1, MAX_ACTION_STEPS + 1):
+        prompt_payload = build_fixer_prompt_payload(
+            code_text=state["code_text"],
+            message_text=message_text,
+            repair_plan=state["repair_plan"],
+            issues=state["issues"],
+            symbols=state["symbols"],
+            context_summary=state["context_summary"],
+            memory_matches=state["memory_matches"],
+            standards_matches=state["standards_matches"],
+            attempt_no=attempt_no,
+            selected_context=state["selected_context"],
+            last_failure=state["last_failure"],
+            repo_profile=state["repo_profile"],
+            action_history=prompt_history,
+        )
+        messages = build_fixer_messages(prompt_payload)
+
+        action_result = _request_action(
+            llm_client=llm_client,
+            messages=messages,
+            options=options,
+        )
+        llm_trace.extend(action_result["llm_trace"])
+
+        if not action_result["ok"]:
+            return _failed_output(
                 attempt_no=attempt_no,
-                patch_id=patch_id,
-                status="failed",
-                failure_stage="fixer",
-                failure_reason=failure_reason,
-                failure_detail=failure_detail,
-                memory_case_ids=memory_case_ids,
+                reason="llm_action_invalid",
+                detail=action_result["detail"],
+                llm_trace=llm_trace,
+                tool_trace=tool_trace,
+                selected_context=state["selected_context"],
+                memory_hits={"cases": state["memory_matches"], "standards": state["standards_matches"]},
+                issues=state["issues"],
+                symbols=state["symbols"],
+                context_summary=state["context_summary"],
+                repair_plan=state["repair_plan"],
+                issue_graph=state["issue_graph"],
+                planner_summary=state["planner_summary"],
+                action_history=prompt_history,
             )
+
+        action = action_result["action"]
+        next_action = str(action.get("next_action") or "").strip()
+        action_args = action.get("action_args") if isinstance(action.get("action_args"), dict) else {}
+        candidate_patch = str(action.get("candidate_patch") or "").strip()
+        explanation = str(action.get("explanation") or "").strip() or "LLM generated patch"
+
+        if next_action == "finalize_patch":
+            if not candidate_patch:
+                return _failed_output(
+                    attempt_no=attempt_no,
+                    reason="no_valid_patch",
+                    detail="finalize_patch was requested without candidate_patch",
+                    llm_trace=llm_trace,
+                    tool_trace=tool_trace,
+                    selected_context=state["selected_context"],
+                    memory_hits={"cases": state["memory_matches"], "standards": state["standards_matches"]},
+                    issues=state["issues"],
+                    symbols=state["symbols"],
+                    context_summary=state["context_summary"],
+                    repair_plan=state["repair_plan"],
+                    issue_graph=state["issue_graph"],
+                    planner_summary=state["planner_summary"],
+                    action_history=prompt_history,
+                )
+            validation_error = _validate_patch(candidate_patch, state["last_failure"], tool_trace)
+            if validation_error is not None:
+                return _failed_output(
+                    attempt_no=attempt_no,
+                    reason=validation_error["reason"],
+                    detail=validation_error["detail"],
+                    llm_trace=llm_trace,
+                    tool_trace=tool_trace,
+                    selected_context=state["selected_context"],
+                    memory_hits={"cases": state["memory_matches"], "standards": state["standards_matches"]},
+                    issues=state["issues"],
+                    symbols=state["symbols"],
+                    context_summary=state["context_summary"],
+                    repair_plan=state["repair_plan"],
+                    issue_graph=state["issue_graph"],
+                    planner_summary=state["planner_summary"],
+                    action_history=prompt_history,
+                )
+            patch_artifact = {
+                "patch_id": f"patch_attempt_{attempt_no}",
+                "attempt_no": attempt_no,
+                "status": "generated",
+                "format": "unified_diff",
+                "content": candidate_patch,
+                "content_hash": _hash_text(candidate_patch),
+                "explanation": explanation,
+                "risk_level": "medium",
+                "target_files": [_resolve_target_file(state["issues"])],
+                "strategy_used": "llm_generation",
+                "memory_case_ids": [str(item.get("case_id")) for item in state["memory_matches"] if item.get("case_id")],
+            }
+            attempt = _build_attempt_record(attempt_no, patch_artifact["patch_id"], "generated", None, None)
             return {
-                "ok": False,
-                "patch_artifact": None,
+                "ok": True,
+                "patch_artifact": patch_artifact,
                 "attempt": attempt,
                 "llm_trace": llm_trace,
+                "tool_trace": tool_trace,
+                "selected_context": state["selected_context"],
+                "memory_hits": {"cases": state["memory_matches"], "standards": state["standards_matches"]},
+                "issues": state["issues"],
+                "symbols": state["symbols"],
+                "context_summary": state["context_summary"],
+                "repair_plan": state["repair_plan"],
+                "issue_graph": state["issue_graph"],
+                "planner_summary": state["planner_summary"],
+                "action_history": prompt_history,
             }
 
-        unified_diff = str(syntax_patch["content"])
-        strategy_used = "syntax_fix"
-        explanation = _build_syntax_explanation(syntax_patch["candidate"])
-    else:
-        compile_failure = _resolve_compile_failure(last_failure, issues)
-        semantic_mode = _should_use_semantic_fix(primary_strategy, compile_failure, issues)
+        if next_action == "fail":
+            return _failed_output(
+                attempt_no=attempt_no,
+                reason="llm_declared_failure",
+                detail=explanation or "LLM orchestrator requested failure.",
+                llm_trace=llm_trace,
+                tool_trace=tool_trace,
+                selected_context=state["selected_context"],
+                memory_hits={"cases": state["memory_matches"], "standards": state["standards_matches"]},
+                issues=state["issues"],
+                symbols=state["symbols"],
+                context_summary=state["context_summary"],
+                repair_plan=state["repair_plan"],
+                issue_graph=state["issue_graph"],
+                planner_summary=state["planner_summary"],
+                action_history=prompt_history,
+            )
 
-        case_adapt_patch = _build_case_adapt_patch(
-            code_text=code_text,
-            memory_matches=memory_matches,
-            target_file=target_file,
-            last_failure=last_failure,
+        handler = tool_handlers.get(next_action)
+        if handler is None:
+            return _failed_output(
+                attempt_no=attempt_no,
+                reason="unknown_action",
+                detail=f"Unsupported action: {next_action}",
+                llm_trace=llm_trace,
+                tool_trace=tool_trace,
+                selected_context=state["selected_context"],
+                memory_hits={"cases": state["memory_matches"], "standards": state["standards_matches"]},
+                issues=state["issues"],
+                symbols=state["symbols"],
+                context_summary=state["context_summary"],
+                repair_plan=state["repair_plan"],
+                issue_graph=state["issue_graph"],
+                planner_summary=state["planner_summary"],
+                action_history=prompt_history,
+            )
+
+        started = time.perf_counter()
+        tool_output = handler(action_args)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        tool_success = bool(tool_output.get("ok", True))
+        tool_trace.append(
+            {
+                "tool_name": next_action,
+                "args": action_args,
+                "success": tool_success,
+                "latency_ms": latency_ms,
+                "selected_by": "llm",
+                "expected_tool": next_action,
+                "phase": f"action_loop_step_{step_no}",
+                "result_preview": _preview(tool_output),
+            }
         )
-        if case_adapt_patch["ok"]:
-            unified_diff = str(case_adapt_patch["content"])
-            strategy_used = "case_adapt"
-            explanation = _build_explanation(strategy_used, memory_matches)
-        else:
-            semantic_patch = {"ok": False, "reason": "no_semantic_candidate", "detail": "semantic repair skipped"}
-            if semantic_mode:
-                semantic_patch = _build_semantic_fix_patch(
-                    code_text=code_text,
-                    issues=issues,
-                    compile_failure=compile_failure,
-                    context={
-                        "repo_profile": repo_profile,
-                        "selected_context": selected_context,
-                        "failure_taxonomy": compile_failure.get("failure_taxonomy"),
-                    },
-                    target_file=target_file,
-                    last_failure=last_failure,
-                )
-                if semantic_patch["ok"]:
-                    unified_diff = str(semantic_patch["content"])
-                    strategy_used = "semantic_compile_fix"
-                    explanation = _build_semantic_explanation(semantic_patch["candidate"])
-                else:
-                    unified_diff = ""
-                    strategy_used = "semantic_compile_fix"
-                    explanation = ""
-            else:
-                unified_diff = ""
-                strategy_used = _resolve_strategy(repair_plan, memory_matches)
-                explanation = ""
 
-            if not unified_diff:
-                if semantic_mode and str(semantic_patch.get("reason") or "") == "duplicate_patch_candidate":
-                    attempt = _build_attempt_record(
-                        attempt_no=attempt_no,
-                        patch_id=patch_id,
-                        status="failed",
-                        failure_stage="fixer",
-                        failure_reason="duplicate_patch_candidate",
-                        failure_detail=str(semantic_patch.get("detail") or "duplicate semantic patch candidate"),
-                        memory_case_ids=memory_case_ids,
-                    )
-                    return {
-                        "ok": False,
-                        "patch_artifact": None,
-                        "attempt": attempt,
-                        "llm_trace": llm_trace,
-                    }
-                llm_result = _build_llm_generation_patch(
-                    code_text=code_text,
-                    target_file=target_file,
-                    prompt_payload=prompt_payload,
-                    compile_failure=compile_failure,
-                    last_failure=last_failure,
-                    options=options,
-                )
-                llm_trace.extend(llm_result.get("llm_trace", []))
-                if llm_result["ok"]:
-                    unified_diff = str(llm_result["content"])
-                    strategy_used = "llm_generation"
-                    explanation = str(llm_result.get("explanation") or "Generated patch using LLM.")
-                else:
-                    if not semantic_mode and str(llm_result.get("reason") or "") == "llm_not_enabled":
-                        fallback_patch = _build_whitespace_fallback_patch(
-                            code_text=code_text,
-                            target_file=target_file,
-                            last_failure=last_failure,
-                        )
-                        if fallback_patch["ok"]:
-                            unified_diff = str(fallback_patch["content"])
-                            strategy_used = "manual_review"
-                            explanation = "Generated minimal non-comment fallback patch."
-                        else:
-                            failure_reason, failure_detail = _resolve_patch_failure(
-                                semantic_mode=semantic_mode,
-                                case_reason=case_adapt_patch.get("reason"),
-                                case_detail=case_adapt_patch.get("detail"),
-                                semantic_reason=semantic_patch.get("reason"),
-                                semantic_detail=semantic_patch.get("detail"),
-                                llm_reason=fallback_patch.get("reason"),
-                                llm_detail=fallback_patch.get("detail"),
-                            )
-                            attempt = _build_attempt_record(
-                                attempt_no=attempt_no,
-                                patch_id=patch_id,
-                                status="failed",
-                                failure_stage="fixer",
-                                failure_reason=failure_reason,
-                                failure_detail=failure_detail,
-                                memory_case_ids=memory_case_ids,
-                            )
-                            return {
-                                "ok": False,
-                                "patch_artifact": None,
-                                "attempt": attempt,
-                                "llm_trace": llm_trace,
-                            }
-                    else:
-                        failure_reason, failure_detail = _resolve_patch_failure(
-                            semantic_mode=semantic_mode,
-                            case_reason=case_adapt_patch.get("reason"),
-                            case_detail=case_adapt_patch.get("detail"),
-                            semantic_reason=semantic_patch.get("reason"),
-                            semantic_detail=semantic_patch.get("detail"),
-                            llm_reason=llm_result.get("reason"),
-                            llm_detail=llm_result.get("detail"),
-                        )
-                        attempt = _build_attempt_record(
-                            attempt_no=attempt_no,
-                            patch_id=patch_id,
-                            status="failed",
-                            failure_stage="fixer",
-                            failure_reason=failure_reason,
-                            failure_detail=failure_detail,
-                            memory_case_ids=memory_case_ids,
-                        )
-                        return {
-                            "ok": False,
-                            "patch_artifact": None,
-                            "attempt": attempt,
-                            "llm_trace": llm_trace,
-                        }
+        prompt_history.append(
+            {
+                "step": step_no,
+                "thought_summary": action.get("thought_summary"),
+                "next_action": next_action,
+                "action_args": action_args,
+                "need_more_context": bool(action.get("need_more_context", False)),
+                "tool_result": _preview(tool_output),
+            }
+        )
 
-    patch_artifact = {
-        "patch_id": patch_id,
-        "attempt_no": attempt_no,
-        "status": "generated",
-        "format": "unified_diff",
-        "content": unified_diff,
-        "content_hash": _hash_text(unified_diff),
-        "explanation": explanation,
-        "risk_level": _resolve_risk_level(memory_matches, strategy_used),
-        "target_files": [target_file],
-        "strategy_used": strategy_used,
-        "memory_case_ids": memory_case_ids,
-    }
-    attempt = _build_attempt_record(
+    return _failed_output(
         attempt_no=attempt_no,
-        patch_id=patch_id,
-        status="generated",
-        failure_stage=None,
-        failure_reason=None,
-        failure_detail=None,
-        memory_case_ids=memory_case_ids,
+        reason="action_loop_exhausted",
+        detail="LLM did not produce a valid patch within the maximum action steps.",
+        llm_trace=llm_trace,
+        tool_trace=tool_trace,
+        selected_context=state["selected_context"],
+        memory_hits={"cases": state["memory_matches"], "standards": state["standards_matches"]},
+        issues=state["issues"],
+        symbols=state["symbols"],
+        context_summary=state["context_summary"],
+        repair_plan=state["repair_plan"],
+        issue_graph=state["issue_graph"],
+        planner_summary=state["planner_summary"],
+        action_history=prompt_history,
     )
+
+
+def _request_action(*, llm_client: Any, messages: list[dict[str, str]], options: dict[str, Any]) -> dict[str, Any]:
+    tool_mode = str(options.get("llm_tool_mode") or "auto").strip().lower() or "auto"
+    tools = _tool_specs()
+    llm_result = llm_client.create_chat_completion(
+        phase="fixer_orchestrator",
+        prompt_name="fixer_action_loop",
+        messages=messages,
+        stream=False,
+        json_mode=True,
+        tool_mode=tool_mode,
+        tools=tools,
+    )
+
+    llm_trace = [llm_result.trace]
+    if not llm_result.ok:
+        return {"ok": False, "detail": llm_result.error or "LLM call failed", "llm_trace": llm_trace}
+
+    if llm_result.tool_calls:
+        call = llm_result.tool_calls[0]
+        fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+        action_args = _safe_json(str(fn.get("arguments") or "{}"))
+        action = {
+            "thought_summary": llm_result.content or "provider-native tool call",
+            "next_action": str(fn.get("name") or ""),
+            "action_args": action_args,
+            "need_more_context": True,
+            "candidate_patch": None,
+            "explanation": llm_result.content or "",
+        }
+        return {"ok": True, "action": action, "llm_trace": llm_trace}
+
+    payload = _safe_json(llm_result.content)
+    if not payload:
+        return {"ok": False, "detail": "LLM did not return valid JSON action", "llm_trace": llm_trace}
+    if "next_action" not in payload:
+        return {"ok": False, "detail": "LLM JSON missing next_action", "llm_trace": llm_trace}
+    return {"ok": True, "action": payload, "llm_trace": llm_trace}
+
+
+def _tool_analyze_ast(state: dict[str, Any]) -> dict[str, Any]:
+    ast_result = parse_java_code(state["code_text"])
+    symbols_result = build_symbol_graph(state["code_text"], ast_result)
+    semgrep_result = run_semgrep(state["code_text"], language="java")
+    merged = compose_day2_output(
+        language="java",
+        ast_result=ast_result,
+        symbol_graph_result=symbols_result,
+        semgrep_result=semgrep_result,
+    )
+    state["issues"] = merged["issues"]
+    state["symbols"] = merged["symbols"]
+    state["context_summary"] = merged["contextSummary"]
     return {
         "ok": True,
-        "patch_artifact": patch_artifact,
-        "attempt": attempt,
-        "llm_trace": llm_trace,
+        "issues_count": len(state["issues"]),
+        "symbols_count": len(state["symbols"]),
     }
 
 
-def _resolve_target_file(issues: list[dict[str, Any]]) -> str:
-    target = resolve_default_target_file(issues)
-    target = target.replace("\\", "/").strip()
-    marker_match = re.match(r"^(?P<path>.+\.java):\d+(?::\d+)?$", target)
-    if marker_match:
-        target = marker_match.group("path")
-    if target.startswith("a/") or target.startswith("b/"):
-        target = target[2:]
-    return target or "snippet.java"
+def _tool_run_semgrep(state: dict[str, Any]) -> dict[str, Any]:
+    semgrep_result = run_semgrep(state["code_text"], language="java")
+    state["issues"] = semgrep_result.get("issues", [])
+    return {"ok": True, "issues_count": len(state["issues"])}
 
 
-def _resolve_primary_strategy(repair_plan: list[dict[str, Any]], issues: list[dict[str, Any]]) -> str:
-    if repair_plan:
-        strategy = str(repair_plan[0].get("strategy") or "").strip()
-        if strategy:
-            return strategy
-    if _contains_semantic_issue(issues):
-        return "semantic_compile_fix"
-    if _contains_syntax_issue(issues):
-        return "syntax_fix"
-    return "manual_review"
-
-
-def _resolve_strategy(repair_plan: list[dict[str, Any]], memory_matches: list[dict[str, Any]]) -> str:
-    if memory_matches:
-        strategy = str(memory_matches[0].get("strategy") or "").strip()
-        if strategy:
-            return strategy
-    if repair_plan:
-        strategy = str(repair_plan[0].get("strategy") or "").strip()
-        if strategy:
-            return strategy
-    return "manual_review"
-
-
-def _build_syntax_fix_patch(
-    *,
-    code_text: str,
-    issues: list[dict[str, Any]],
-    last_failure: dict[str, Any] | None,
-    target_file: str,
-) -> dict[str, Any]:
-    candidates = propose_syntax_repair_candidates(code_text, issues, last_failure)
-    if not candidates:
-        if not _contains_syntax_issue(issues):
-            return {
-                "ok": False,
-                "reason": "unsupported_syntax_repair",
-                "detail": "current issue set is not suitable for syntax_fix",
-            }
-        return {
-            "ok": False,
-            "reason": "no_repair_candidate",
-            "detail": "syntax repair could not produce a candidate",
-        }
-
-    previous_patch_hash = _resolve_previous_patch_hash(last_failure)
-    seen_hashes: set[str] = set()
-    duplicate_candidates = 0
-    for candidate in candidates:
-        repaired_code = str(candidate.get("repaired_code") or "")
-        if not repaired_code:
-            continue
-
-        unified_diff = build_unified_diff_from_repaired_code(code_text, repaired_code, target_file)
-        if not _is_valid_unified_diff(unified_diff):
-            continue
-
-        patch_hash = _hash_text(unified_diff)
-        if patch_hash in seen_hashes:
-            continue
-        seen_hashes.add(patch_hash)
-
-        if previous_patch_hash and patch_hash == previous_patch_hash:
-            duplicate_candidates += 1
-            continue
-
-        return {
-            "ok": True,
-            "content": unified_diff,
-            "candidate": candidate,
-        }
-
-    if duplicate_candidates > 0:
-        return {
-            "ok": False,
-            "reason": "duplicate_patch_candidate",
-            "detail": "all syntax repair candidates duplicate the previous patch",
-        }
-    return {
-        "ok": False,
-        "reason": "no_repair_candidate",
-        "detail": "syntax repair candidates did not produce a valid unified diff",
-    }
-
-
-def _build_semantic_fix_patch(
-    *,
-    code_text: str,
-    issues: list[dict[str, Any]],
-    compile_failure: dict[str, Any],
-    context: dict[str, Any],
-    target_file: str,
-    last_failure: dict[str, Any] | None,
-) -> dict[str, Any]:
-    compile_bucket = str(compile_failure.get("compile_failure_bucket") or "").strip()
-    if compile_bucket and compile_bucket not in SEMANTIC_BUCKETS:
-        return {
-            "ok": False,
-            "reason": "semantic_repair_unsupported",
-            "detail": f"unsupported compile bucket: {compile_bucket}",
-        }
-
-    candidates = propose_semantic_repair_candidates(
-        code_text=code_text,
-        issues=issues,
-        compile_failure=compile_failure,
-        context=context,
+def _tool_build_issue_graph(state: dict[str, Any]) -> dict[str, Any]:
+    planner_output = run_planner_agent(
+        issues=state["issues"],
+        symbols=state["symbols"],
+        context_summary=state["context_summary"],
     )
-    if not candidates:
-        if compile_bucket:
-            return {
-                "ok": False,
-                "reason": "no_semantic_candidate",
-                "detail": f"semantic repair produced no candidate for bucket: {compile_bucket}",
-            }
-        return {
-            "ok": False,
-            "reason": "insufficient_context_for_semantic_fix",
-            "detail": "compile failure signals are missing for semantic fix",
-        }
-
-    previous_patch_hash = _resolve_previous_patch_hash(last_failure)
-    seen_hashes: set[str] = set()
-    duplicate_candidates = 0
-    failure_reason = "no_semantic_candidate"
-    failure_detail = "semantic repair candidates did not produce a valid patch"
-
-    for candidate in candidates:
-        repaired_code = str(candidate.get("repaired_code") or "")
-        candidate_reason = str(candidate.get("reason") or "").strip()
-        if candidate_reason and not repaired_code:
-            failure_reason = candidate_reason
-            failure_detail = f"semantic candidate rejected: {candidate_reason}"
-            continue
-        if not repaired_code:
-            continue
-
-        unified_diff = build_semantic_repair_patch(
-            original_code=code_text,
-            repaired_code=repaired_code,
-            target_file=target_file,
-        )
-        if not _is_valid_unified_diff(unified_diff):
-            continue
-
-        patch_hash = _hash_text(unified_diff)
-        if patch_hash in seen_hashes:
-            continue
-        seen_hashes.add(patch_hash)
-        if previous_patch_hash and patch_hash == previous_patch_hash:
-            duplicate_candidates += 1
-            continue
-        return {
-            "ok": True,
-            "content": unified_diff,
-            "candidate": candidate,
-        }
-
-    if duplicate_candidates > 0:
-        return {
-            "ok": False,
-            "reason": "duplicate_patch_candidate",
-            "detail": "all semantic repair candidates duplicate the previous patch",
-        }
+    state["issue_graph"] = planner_output["issue_graph"]
+    state["repair_plan"] = planner_output["repair_plan"]
+    state["planner_summary"] = planner_output["planner_summary"]
     return {
-        "ok": False,
-        "reason": failure_reason,
-        "detail": failure_detail,
+        "ok": True,
+        "nodes": len(state["issue_graph"].get("nodes", [])),
+        "plans": len(state["repair_plan"]),
     }
 
 
-def _resolve_previous_patch_hash(last_failure: dict[str, Any] | None) -> str | None:
-    if not last_failure:
-        return None
-    value = str(last_failure.get("previous_patch_hash") or "").strip()
-    if value:
-        return value
-    previous_patch_content = str(last_failure.get("previous_patch_content") or "")
-    if previous_patch_content:
-        return _hash_text(previous_patch_content)
+def _tool_resolve_symbol(state: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    name = str(args.get("name") or "").strip().lower()
+    matches = []
+    for symbol in state.get("symbols", []):
+        if name and name in str(symbol.get("name") or "").lower():
+            matches.append(symbol)
+    return {"ok": True, "matches": matches[:8]}
+
+
+def _tool_fetch_context(state: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    line = int(args.get("line") or 1)
+    window = int(args.get("window") or 8)
+    lines = state["code_text"].splitlines()
+    start = max(1, line - window)
+    end = min(len(lines), line + window)
+    snippet = "\n".join(lines[start - 1 : end])
+    item = {
+        "kind": "issue_vicinity",
+        "line": line,
+        "start": start,
+        "end": end,
+        "snippet": snippet,
+        "tokens": max(1, int(len(snippet) / 4)),
+    }
+    state["selected_context"].append(item)
+    return {"ok": True, "context": item}
+
+
+def _tool_get_repo_profile(state: dict[str, Any]) -> dict[str, Any]:
+    profile = state.get("repo_profile", {})
+    return {"ok": True, "repo_profile": profile}
+
+
+def _tool_search_case_memory(state: dict[str, Any]) -> dict[str, Any]:
+    cases = retrieve_case_matches(
+        issues=state.get("issues", []),
+        repair_plan=state.get("repair_plan", []),
+        symbols=state.get("symbols", []),
+        context_summary=state.get("context_summary", {}),
+        top_k=3,
+    )
+    state["memory_matches"] = cases
+    return {"ok": True, "matches": cases}
+
+
+def _tool_search_short_term_memory(state: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "latest_verifier_failure": state.get("last_failure", {})}
+
+
+def _tool_apply_patch(state: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    patch = str(args.get("patch") or "")
+    stage = apply_patch_to_snippet(
+        original_code=state["code_text"],
+        patch_content=patch,
+        target_file=_resolve_target_file(state.get("issues", [])),
+    )
+    return {
+        "ok": stage.get("status") == "passed",
+        "status": stage.get("status"),
+        "stderr_summary": stage.get("stderr_summary"),
+    }
+
+
+def _tool_compile_java(state: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    code = str(args.get("code_text") or state["code_text"])
+    stage = compile_java_snippet(code_text=code, file_name="snippet.java")
+    return {
+        "ok": stage.get("status") == "passed",
+        "status": stage.get("status"),
+        "stderr_summary": stage.get("stderr_summary"),
+    }
+
+
+def _tool_lint_java(state: dict[str, Any], args: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    stage = run_lint_stage(options=options, repo_profile=state.get("repo_profile", {}), working_directory=None)
+    return {"ok": stage.get("status") in {"passed", "skipped"}, "status": stage.get("status")}
+
+
+def _tool_run_tests(state: dict[str, Any], args: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    stage = run_test_stage(options=options, repo_profile=state.get("repo_profile", {}), working_directory=None)
+    return {"ok": stage.get("status") in {"passed", "skipped"}, "status": stage.get("status")}
+
+
+def _tool_security_rescan(state: dict[str, Any], args: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    stage = run_security_rescan_stage(options=options, working_directory=None)
+    return {"ok": stage.get("status") in {"passed", "skipped"}, "status": stage.get("status")}
+
+
+def _tool_specs() -> list[dict[str, Any]]:
+    specs = []
+    for name in [
+        "build_issue_graph",
+        "analyze_ast",
+        "run_semgrep",
+        "resolve_symbol",
+        "fetch_context",
+        "get_repo_profile",
+        "search_case_memory",
+        "search_short_term_memory",
+        "apply_patch",
+        "compile_java",
+        "lint_java",
+        "run_tests",
+        "security_rescan",
+    ]:
+        specs.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Sentinel tool {name}",
+                    "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+                },
+            }
+        )
+    return specs
+
+
+def _load_standards(code_text: str, message_text: str | None, issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    query = " ".join(
+        [
+            message_text or "",
+            code_text[:400],
+            " ".join(str(item.get("message") or "") for item in issues[:5]),
+        ]
+    ).strip()
+    if not query:
+        return []
+    return search_standards(query, limit=3)
+
+
+def _validate_patch(patch: str, last_failure: dict[str, Any], tool_trace: list[dict[str, Any]]) -> dict[str, str] | None:
+    if not _is_valid_unified_diff(patch):
+        return {"reason": "invalid_diff", "detail": "candidate_patch is not a valid unified diff"}
+    if not _is_meaningful_patch(patch):
+        return {"reason": "no_valid_patch", "detail": "candidate_patch is whitespace/no-op/comment-only"}
+    previous_hash = _resolve_previous_patch_hash(last_failure)
+    if previous_hash and previous_hash == _hash_text(patch):
+        return {"reason": "duplicate_patch_candidate", "detail": "candidate_patch duplicates previous patch"}
+    if len(tool_trace) == 0:
+        return {"reason": "insufficient_context", "detail": "at least one tool call is required before finalize_patch"}
     return None
 
 
-def _build_case_adapt_patch(
-    *,
-    code_text: str,
-    memory_matches: list[dict[str, Any]],
-    target_file: str,
-    last_failure: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if memory_matches:
-        candidate = str(memory_matches[0].get("diff") or "").strip()
-        adapted = _adapt_diff_path(candidate, target_file)
-        if adapted and _is_candidate_compatible(adapted, code_text):
-            patch_hash = _hash_text(adapted)
-            previous_patch_hash = _resolve_previous_patch_hash(last_failure)
-            if previous_patch_hash and previous_patch_hash == patch_hash:
-                return {
-                    "ok": False,
-                    "reason": "duplicate_patch_candidate",
-                    "detail": "case adaptation generated a duplicate patch",
-                }
-            return {"ok": True, "content": adapted}
-        if _is_valid_unified_diff(adapted):
-            return {
-                "ok": False,
-                "reason": "no_valid_patch",
-                "detail": "case adaptation diff is not compatible with current snippet",
-            }
-    return {
-        "ok": False,
-        "reason": "no_case_match_patch",
-        "detail": "no compatible case adaptation patch",
-    }
-
-
-def _build_whitespace_fallback_patch(
-    *,
-    code_text: str,
-    target_file: str,
-    last_failure: dict[str, Any] | None,
-) -> dict[str, Any]:
-    lines = code_text.splitlines()
-    if not lines:
-        return {
-            "ok": False,
-            "reason": "no_valid_patch",
-            "detail": "empty snippet cannot build fallback patch",
-        }
-    repaired_lines = list(lines)
-    changed = False
-    for index, line in enumerate(repaired_lines):
-        if line.strip():
-            suffix = " " if not line.endswith(" ") else "  "
-            repaired_lines[index] = line + suffix
-            changed = True
-            break
-    if not changed:
-        repaired_lines[0] = repaired_lines[0] + " "
-    repaired_code = "\n".join(repaired_lines)
-    if repaired_code == code_text:
-        return {
-            "ok": False,
-            "reason": "no_valid_patch",
-            "detail": "fallback patch did not change code",
-        }
-    unified_diff = build_unified_diff_from_repaired_code(code_text, repaired_code, target_file)
-    if not _is_valid_unified_diff(unified_diff):
-        return {
-            "ok": False,
-            "reason": "no_valid_patch",
-            "detail": "failed to build fallback unified diff",
-        }
-    previous_patch_hash = _resolve_previous_patch_hash(last_failure)
-    patch_hash = _hash_text(unified_diff)
-    if previous_patch_hash and previous_patch_hash == patch_hash:
-        return {
-            "ok": False,
-            "reason": "duplicate_patch_candidate",
-            "detail": "fallback patch duplicates previous attempt",
-        }
-    return {"ok": True, "content": unified_diff}
-
-
-def _build_llm_generation_patch(
-    *,
-    code_text: str,
-    target_file: str,
-    prompt_payload: dict[str, Any],
-    compile_failure: dict[str, Any],
-    last_failure: dict[str, Any] | None,
-    options: dict[str, Any],
-) -> dict[str, Any]:
-    client = build_llm_client(options)
-    if client is None:
-        return {
-            "ok": False,
-            "reason": "llm_not_enabled",
-            "detail": "llm is disabled or missing credentials",
-            "llm_trace": [],
-        }
-
-    reflect_payload = build_verifier_reflect_payload(
-        failed_stage=compile_failure.get("failed_stage"),
-        stderr_summary=compile_failure.get("stderr_summary"),
-        previous_patch=(last_failure or {}).get("previous_patch_content"),
-        selected_context=prompt_payload.get("selected_context", []),
-        failure_taxonomy=compile_failure.get("failure_taxonomy"),
-    )
-    llm_payload = dict(prompt_payload)
-    llm_payload["retry_reflect"] = reflect_payload
-    llm_payload["target_file"] = target_file
-    llm_payload["code_text"] = code_text
-    messages = build_fixer_messages(llm_payload)
-    result = client.create_chat_completion(
-        phase="fixer",
-        prompt_name="fixer_prompt",
-        messages=messages,
-        stream=bool(options.get("llm_stream", False)),
-        json_mode=True,
-        tool_mode=str(options.get("llm_tool_mode") or "off"),
-    )
-    llm_trace = [result.trace]
-    if not result.ok:
-        return {
-            "ok": False,
-            "reason": "llm_generation_failed",
-            "detail": result.error or "llm returned empty content",
-            "llm_trace": llm_trace,
-        }
-
-    parsed = _parse_json_payload(result.content)
-    patch_content = str(parsed.get("patch") or "").strip()
-    explanation = str(parsed.get("explanation") or "").strip()
-    strategy = str(parsed.get("strategy") or "").strip().lower()
-    if strategy and strategy not in LLM_STRATEGY_VALUES:
-        strategy = "llm_generation"
-    if not strategy:
-        strategy = "llm_generation"
-    if strategy == "case_adapt":
-        strategy = "llm_generation"
-
-    if not _is_valid_unified_diff(patch_content):
-        return {
-            "ok": False,
-            "reason": "no_valid_patch",
-            "detail": "llm returned invalid unified diff",
-            "llm_trace": llm_trace,
-        }
-    previous_patch_hash = _resolve_previous_patch_hash(last_failure)
-    patch_hash = _hash_text(patch_content)
-    if previous_patch_hash and previous_patch_hash == patch_hash:
-        return {
-            "ok": False,
-            "reason": "duplicate_patch_candidate",
-            "detail": "llm generated patch duplicates previous attempt",
-            "llm_trace": llm_trace,
-        }
-
-    return {
-        "ok": True,
-        "content": patch_content,
-        "strategy": strategy,
-        "explanation": explanation,
-        "llm_trace": llm_trace,
-    }
-
-
-def _adapt_diff_path(diff_text: str, target_file: str) -> str:
-    if not diff_text:
-        return ""
-    lines = diff_text.splitlines()
-    if len(lines) < 3:
-        return ""
-
-    normalized = []
-    for index, line in enumerate(lines):
-        if index == 0 and line.startswith("diff --git "):
-            normalized.append(f"diff --git a/{target_file} b/{target_file}")
-            continue
-        if line.startswith("--- "):
-            normalized.append(f"--- a/{target_file}")
-            continue
-        if line.startswith("+++ "):
-            normalized.append(f"+++ b/{target_file}")
-            continue
-        normalized.append(line)
-    return "\n".join(normalized)
-
-
-def _is_candidate_compatible(diff_text: str, code_text: str) -> bool:
-    if not code_text:
-        return False
-    source_lines = code_text.splitlines()
-    source_set = set(source_lines)
-    for line in diff_text.splitlines():
-        if line.startswith("-") and not line.startswith("---"):
-            removed = line[1:]
-            if removed not in source_set:
-                return False
-    return True
-
-
-def _first_code_line(code_text: str) -> str:
-    for line in code_text.splitlines():
-        if line.strip():
-            return line
-    return "// empty snippet"
+def _resolve_target_file(issues: list[dict[str, Any]]) -> str:
+    for issue in issues:
+        file_path = str(issue.get("file_path") or issue.get("filePath") or "").strip()
+        if file_path:
+            return file_path.replace("\\", "/")
+    return "snippet.java"
 
 
 def _is_valid_unified_diff(content: str) -> bool:
-    if not content:
-        return False
     lines = content.splitlines()
     if len(lines) < 3:
         return False
     return lines[0].startswith("diff --git a/") and lines[1].startswith("--- a/") and lines[2].startswith("+++ b/")
 
 
-def _contains_syntax_issue(issues: list[dict[str, Any]]) -> bool:
-    for issue in issues:
-        issue_type = str(issue.get("type") or issue.get("issueType") or issue.get("issue_type") or "").lower()
-        rule_id = str(issue.get("ruleId") or issue.get("rule_id") or "").upper()
-        if issue_type == "syntax_error" or rule_id == "AST_PARSE_ERROR":
-            return True
+def _is_meaningful_patch(content: str) -> bool:
+    for line in content.splitlines():
+        if not line.startswith("+") and not line.startswith("-"):
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        payload = line[1:].strip()
+        if not payload:
+            continue
+        if payload.startswith("//") or payload.startswith("/*") or payload.startswith("*"):
+            continue
+        return True
     return False
 
 
-def _contains_semantic_issue(issues: list[dict[str, Any]]) -> bool:
-    for issue in issues:
-        issue_type = str(issue.get("type") or issue.get("issueType") or issue.get("issue_type") or "").lower()
-        message = str(issue.get("message") or "").lower()
-        if issue_type in SEMANTIC_BUCKETS:
-            return True
-        if "missing return statement" in message:
-            return True
-        if "not all code paths return a value" in message:
-            return True
-        if "might not have been initialized" in message:
-            return True
-        if "incompatible types" in message:
-            return True
-    return False
+def _resolve_previous_patch_hash(last_failure: dict[str, Any]) -> str | None:
+    hash_value = str(last_failure.get("previous_patch_hash") or "").strip()
+    if hash_value:
+        return hash_value
+    content = str(last_failure.get("previous_patch_content") or "")
+    if content:
+        return _hash_text(content)
+    return None
 
 
-def _build_syntax_explanation(candidate: dict[str, Any]) -> str:
-    applied_fixes = candidate.get("applied_fixes", [])
-    if not isinstance(applied_fixes, list) or not applied_fixes:
-        return "Generated patch using deterministic syntax repair."
-    return f"Generated patch using deterministic syntax repair: {', '.join(str(item) for item in applied_fixes)}."
-
-
-def _build_explanation(strategy_used: str, memory_matches: list[dict[str, Any]]) -> str:
-    if memory_matches:
-        return f"Generated patch using case adaptation strategy: {strategy_used}."
-    return f"Generated patch using deterministic fallback strategy: {strategy_used}."
-
-
-def _build_semantic_explanation(candidate: dict[str, Any]) -> str:
-    applied_fixes = candidate.get("applied_fixes", [])
-    if not isinstance(applied_fixes, list) or not applied_fixes:
-        return "Generated patch using deterministic semantic compile repair."
-    return f"Generated patch using deterministic semantic compile repair: {', '.join(str(item) for item in applied_fixes)}."
-
-
-def _resolve_risk_level(memory_matches: list[dict[str, Any]], strategy_used: str) -> str:
-    if strategy_used in {"parameterized_query", "batch_query"}:
-        return "medium"
-    if strategy_used in {"manual_review"}:
-        return "high"
-    if strategy_used in {"semantic_compile_fix", "llm_generation"}:
-        return "medium"
-    if memory_matches:
-        return "medium"
-    return "low"
-
-
-def _build_attempt_record(
-    *,
-    attempt_no: int,
-    patch_id: str,
-    status: str,
-    failure_stage: str | None,
-    failure_reason: str | None,
-    failure_detail: str | None,
-    memory_case_ids: list[str],
-) -> dict[str, Any]:
+def _build_attempt_record(attempt_no: int, patch_id: str, status: str, reason: str | None, detail: str | None) -> dict[str, Any]:
     return {
         "attempt_no": attempt_no,
         "patch_id": patch_id,
         "status": status,
         "verified_level": "L0",
-        "failure_stage": failure_stage,
-        "failure_reason": failure_reason,
-        "failure_detail": failure_detail,
-        "memory_case_ids": memory_case_ids,
+        "failure_stage": "fixer" if status == "failed" else None,
+        "failure_reason": reason,
+        "failure_detail": detail,
+        "memory_case_ids": [],
     }
+
+
+def _failed_output(
+    *,
+    attempt_no: int,
+    reason: str,
+    detail: str,
+    llm_trace: list[dict[str, Any]],
+    tool_trace: list[dict[str, Any]],
+    selected_context: list[dict[str, Any]],
+    memory_hits: dict[str, Any],
+    issues: list[dict[str, Any]],
+    symbols: list[dict[str, Any]],
+    context_summary: dict[str, Any],
+    repair_plan: list[dict[str, Any]],
+    issue_graph: dict[str, Any],
+    planner_summary: dict[str, Any],
+    action_history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "patch_artifact": None,
+        "attempt": _build_attempt_record(attempt_no, f"patch_attempt_{attempt_no}", "failed", reason, detail),
+        "llm_trace": llm_trace,
+        "tool_trace": tool_trace,
+        "selected_context": selected_context,
+        "memory_hits": memory_hits,
+        "issues": issues,
+        "symbols": symbols,
+        "context_summary": context_summary,
+        "repair_plan": repair_plan,
+        "issue_graph": issue_graph,
+        "planner_summary": planner_summary,
+        "action_history": action_history,
+    }
+
+
+def _safe_json(content: str) -> dict[str, Any]:
+    raw = str(content or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
 
 
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
 
 
-def _resolve_compile_failure(last_failure: dict[str, Any] | None, issues: list[dict[str, Any]]) -> dict[str, Any]:
-    last_failure = last_failure or {}
-    failed_stage = str(last_failure.get("failed_stage") or "").strip().lower()
-    reason = str(last_failure.get("reason") or last_failure.get("failure_reason") or "").strip()
-    stderr_summary = str(last_failure.get("stderr_summary") or last_failure.get("detail") or "").strip()
-    compile_bucket = str(last_failure.get("compile_failure_bucket") or "").strip()
-    if not compile_bucket:
-        compile_bucket = classify_compile_failure_bucket(stderr_summary, reason) or ""
-    if not compile_bucket:
-        compile_bucket = _infer_compile_bucket_from_issues(issues) or ""
-    return {
-        "failed_stage": failed_stage,
-        "reason": reason,
-        "stderr_summary": stderr_summary,
-        "compile_failure_bucket": compile_bucket or None,
-        "failure_taxonomy": last_failure.get("failure_taxonomy"),
-    }
-
-
-def _infer_compile_bucket_from_issues(issues: list[dict[str, Any]]) -> str | None:
-    text = " ".join(str(item.get("message") or "") for item in issues)
-    return classify_compile_failure_bucket(text, None)
-
-
-def _should_use_semantic_fix(
-    primary_strategy: str,
-    compile_failure: dict[str, Any],
-    issues: list[dict[str, Any]],
-) -> bool:
-    if primary_strategy == "semantic_compile_fix":
-        return True
-    if str(compile_failure.get("failed_stage") or "").lower() == "compile":
-        return bool(compile_failure.get("compile_failure_bucket"))
-    return _contains_semantic_issue(issues)
-
-
-def _parse_json_payload(content: str) -> dict[str, Any]:
-    raw = str(content or "").strip()
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            return parsed
-        return {}
-    except Exception:
-        return {}
-
-
-def _resolve_patch_failure(
-    *,
-    semantic_mode: bool,
-    case_reason: Any,
-    case_detail: Any,
-    semantic_reason: Any,
-    semantic_detail: Any,
-    llm_reason: Any,
-    llm_detail: Any,
-) -> tuple[str, str]:
-    reason_candidates = [
-        str(llm_reason or "").strip(),
-        str(semantic_reason or "").strip() if semantic_mode else "",
-        str(case_reason or "").strip(),
-    ]
-    detail_candidates = [
-        str(llm_detail or "").strip(),
-        str(semantic_detail or "").strip() if semantic_mode else "",
-        str(case_detail or "").strip(),
-    ]
-    reason = next((item for item in reason_candidates if item), "")
-    detail = next((item for item in detail_candidates if item), "")
-    if not reason:
-        reason = "no_valid_patch"
-    if not detail:
-        detail = "Unable to generate a valid unified diff."
-    return reason, detail
+def _preview(value: Any) -> Any:
+    if isinstance(value, dict):
+        keys = list(value.keys())[:8]
+        return {k: value.get(k) for k in keys}
+    if isinstance(value, list):
+        return value[:3]
+    return value

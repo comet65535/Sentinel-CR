@@ -44,6 +44,18 @@ public class ReviewController {
         return reviewService.listReviewTasks(limit);
     }
 
+    @GetMapping("/conversations")
+    public List<java.util.Map<String, Object>> listConversations(@RequestParam(defaultValue = "100") int limit) {
+        return reviewService.listConversations(limit);
+    }
+
+    @GetMapping("/conversations/{conversationId}/messages")
+    public List<java.util.Map<String, Object>> listConversationMessages(
+            @PathVariable String conversationId,
+            @RequestParam(defaultValue = "500") int limit) {
+        return reviewService.listConversationMessages(conversationId, limit);
+    }
+
     @GetMapping(value = "/{taskId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<ReviewEvent>> streamReviewEvents(
             @PathVariable String taskId, ServerHttpResponse response) {

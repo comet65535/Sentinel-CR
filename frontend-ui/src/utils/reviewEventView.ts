@@ -249,6 +249,9 @@ export function buildReadableFailureMessage(
 
   const stage = stats.failedStage === '-' ? '未知阶段' : stats.failedStage
   const reason = stats.failureReason === '-' ? '原因暂不可用' : stats.failureReason
+  if (reason.includes('llm_not_enabled_or_missing_credentials')) {
+    return 'LLM disabled / missing credentials。请配置凭证后重试。'
+  }
   const retryPart = `已重试 ${stats.retryCount} 次${stats.retryExhausted ? '，重试预算已耗尽' : ''}`
   return `处理在 ${stage} 阶段失败，${reason}。${retryPart}。`
 }
@@ -266,7 +269,7 @@ export function buildConversationItems(
       role: 'user',
       type: 'code',
       title: '你',
-      text: '我提交了一段 Java 代码，请帮我分析并修复。',
+      text: '请根据我的约束修复这段代码。',
       code: submittedCode,
     })
   }
