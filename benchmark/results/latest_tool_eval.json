@@ -1,11 +1,11 @@
 {
   "schema_version": "day7.eval.v1",
-  "generated_at": "2026-04-03T14:13:41.997655+00:00",
+  "generated_at": "2026-04-04T09:31:13.421582+00:00",
   "ok": true,
   "error": null,
   "summary": {
-    "cases_total": 0,
-    "expected_total": 0,
+    "cases_total": 8,
+    "expected_total": 16,
     "actual_total": 0,
     "true_positive_total": 0,
     "wrong_tool_calls": 0
@@ -15,5 +15,54 @@
     "tool_calling_precision": 0.0,
     "wrong_tool_call_rate": 0.0
   },
-  "cases": []
+  "cases": [
+    {
+      "case_id": "case_001_missing_return_string",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_004_simple_type_mismatch",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_006_sql_injection",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_008_resource_leak",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_002_missing_return_boolean",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_007_n_plus_one",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_003_uninitialized_local",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    },
+    {
+      "case_id": "case_005_null_pointer",
+      "expected_count": 2,
+      "actual_count": 0,
+      "true_positive": 0
+    }
+  ]
 }

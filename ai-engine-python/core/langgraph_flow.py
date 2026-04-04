@@ -91,16 +91,26 @@ def bootstrap_state(request: InternalReviewRunRequest) -> dict[str, Any]:
 def build_langgraph(ops: EngineOps):
     graph = StateGraph(dict)
     graph.add_node("bootstrap", _bootstrap_node(ops))
+    graph.add_node("analyzer", _analyzer_node(ops))
+    graph.add_node("planner", _planner_node(ops))
+    graph.add_node("memory_context", _memory_node(ops))
     graph.add_node("fixer", _fixer_node(ops))
     graph.add_node("verifier", _verifier_node(ops))
     graph.add_node("retry_router", _retry_router_node())
     graph.add_node("reporter", _reporter_node(ops))
 
     graph.set_entry_point("bootstrap")
-    graph.add_edge("bootstrap", "fixer")
+    graph.add_edge("bootstrap", "analyzer")
+    graph.add_conditional_edges("analyzer", _route_after_analyzer, {"planner": "planner", "reporter": "reporter"})
+    graph.add_edge("planner", "memory_context")
+    graph.add_edge("memory_context", "fixer")
     graph.add_conditional_edges("fixer", _route_after_fixer, {"verifier": "verifier", "reporter": "reporter"})
     graph.add_conditional_edges("verifier", _route_after_verifier, {"retry_router": "retry_router", "reporter": "reporter"})
-    graph.add_conditional_edges("retry_router", _route_after_retry, {"fixer": "fixer", "reporter": "reporter"})
+    graph.add_conditional_edges(
+        "retry_router",
+        _route_after_retry,
+        {"memory_context": "memory_context", "reporter": "reporter"},
+    )
     graph.add_edge("reporter", END)
     return graph.compile()
 
@@ -197,6 +207,26 @@ def _bootstrap_node(ops: EngineOps):
                 "context budget initialized",
                 {"source": "python-engine", "stage": "context_budget", "context_budget": state["context_budget"]},
             )
+        user_constraints = str(state.get("message_text") or "").strip()
+        if user_constraints:
+            state["short_term_memory"] = ops.update_short_term_memory(
+                state,
+                snapshot_type="user_constraints",
+                payload={
+                    "message_text": user_constraints,
+                    "message_id": state.get("message_id"),
+                    "parent_message_id": state.get("parent_message_id"),
+                },
+            )
+        state["short_term_memory"] = ops.update_short_term_memory(
+            state,
+            snapshot_type="latest_code",
+            payload={
+                "code_text": state.get("code_text", ""),
+                "language": state.get("language", "java"),
+                "task_id": state.get("task_id"),
+            },
+        )
         return _full_state(state)
 
     return _node
@@ -542,62 +572,94 @@ def _memory_node(ops: EngineOps):
                 },
             )
         budget = state.get("context_budget", {})
+        selected_context: list[dict[str, Any]] = []
         if budget:
-            source_item = {
-                "source_id": f"ctx-{attempt_no}-snippet",
-                "kind": "snippet_window",
+            summary_item = {
+                "source_id": f"ctx-{attempt_no}-summary",
+                "kind": "summary",
                 "path": "snippet.java",
-                "token_count": max(1, int(len(state.get("code_text", "")) / 4)),
-                "reason": "issue vicinity",
+                "content": str(state.get("context_summary", {})),
+                "token_count": max(1, int(len(str(state.get("context_summary", {}))) / 4)),
+                "reason": "planner summary first",
             }
-            updated, exhausted = register_loaded_context(budget, source_item=source_item, load_stage="issue_snippet")
+            updated, exhausted = register_loaded_context(budget, source_item=summary_item, load_stage="summary")
             state["context_budget"] = updated
-            state["selected_context"] = [source_item]
-            _record_debug_event(
-                state,
-                "context_resource_loaded",
-                "context resource loaded",
-                {"source": "python-engine", "stage": "context_budget", "source_item": source_item, "context_budget": updated},
-            )
+            selected_context.append(summary_item)
+            if not exhausted:
+                focus_line = _resolve_focus_line_from_issues(state.get("issues", []))
+                snippet_item = _build_local_snippet_context(
+                    code_text=str(state.get("code_text") or ""),
+                    focus_line=focus_line,
+                    window=12,
+                    source_id=f"ctx-{attempt_no}-snippet",
+                )
+                updated, exhausted = register_loaded_context(updated, source_item=snippet_item, load_stage="issue_snippet")
+                state["context_budget"] = updated
+                selected_context.append(snippet_item)
+            state["selected_context"] = selected_context
             _record_debug_event(
                 state,
                 "context_budget_updated",
                 "context budget updated",
-                {"source": "python-engine", "stage": "context_budget", "context_budget": updated},
+                {"source": "python-engine", "stage": "context_budget", "context_budget": state["context_budget"]},
             )
             if exhausted:
                 _record_debug_event(
                     state,
                     "context_budget_exhausted",
                     "context budget exhausted",
-                    {"source": "python-engine", "stage": "context_budget", "reason": "remaining_tokens=0", "context_budget": updated},
+                    {
+                        "source": "python-engine",
+                        "stage": "context_budget",
+                        "reason": "remaining_tokens=0",
+                        "context_budget": state["context_budget"],
+                    },
                 )
             state["short_term_memory"] = ops.update_short_term_memory(
-                state, snapshot_type="token_usage", payload={"used_tokens": updated.get("used_tokens", 0)}
+                state,
+                snapshot_type="token_usage",
+                payload={"used_tokens": state["context_budget"].get("used_tokens", 0)},
             )
 
         if bool(state.get("options", {}).get("enable_mcp", False)):
             client = McpClient(base_url=build_mcp_base_url(state.get("metadata", {})))
-            _record_debug_event(
-                state,
-                "mcp_resource_requested",
-                "mcp resource requested",
-                {"source": "backend-mcp", "stage": "mcp", "resource_name": "schema"},
-            )
+            focus_line = _resolve_focus_line_from_issues(state.get("issues", []))
+            start_line = max(1, focus_line - 10)
+            end_line = focus_line + 10
             envelope, trace_item = client.get_resource(
-                "schema",
-                query={"taskId": state["task_id"], "schemaType": "api_contract"},
+                "file",
+                query={
+                    "taskId": state["task_id"],
+                    "path": "snippet.java",
+                    "startLine": start_line,
+                    "endLine": end_line,
+                },
             )
-            trace_item["selected_by"] = "context_budget"
+            trace_item["selected_by"] = "context_broker"
             state["tool_trace"] = list(state.get("tool_trace", [])) + [trace_item]
+            data = envelope.get("data") if isinstance(envelope.get("data"), dict) else {}
+            mcp_content = str(data.get("content") or "").strip()
+            if mcp_content:
+                state["selected_context"] = list(state.get("selected_context", [])) + [
+                    {
+                        "source_id": f"ctx-{attempt_no}-mcp-file",
+                        "kind": "mcp_file_window",
+                        "path": str(data.get("path") or "snippet.java"),
+                        "startLine": int(data.get("startLine") or start_line),
+                        "endLine": int(data.get("endLine") or end_line),
+                        "content": mcp_content,
+                        "token_count": max(1, int(len(mcp_content) / 4)),
+                        "reason": "mcp evidence",
+                    }
+                ]
             _record_debug_event(
                 state,
                 "mcp_resource_completed",
-                "mcp resource completed",
+                "mcp file resource completed",
                 {
                     "source": "backend-mcp",
                     "stage": "mcp",
-                    "resource_name": "schema",
+                    "resource_name": "file",
                     "request_id": envelope.get("request_id"),
                     "ok": envelope.get("ok", False),
                     "latency_ms": (envelope.get("meta", {}) or {}).get("latency_ms", 0),
@@ -872,11 +934,17 @@ def _verifier_node(ops: EngineOps):
         failed_stage = verification.get("failed_stage")
         failure_reason = verification.get("failure_reason") or _extract_failure_reason(verification)
         failure_detail = _extract_failure_detail(verification)
+        failure_code = str(verification.get("failure_code") or "").strip() or None
+        stderr_excerpt = str(verification.get("stderr_excerpt") or "").strip() or None
+        retry_hint = str(verification.get("retry_hint") or "").strip() or None
         compile_failure_bucket = _extract_compile_failure_bucket(verification)
         patch_artifact = state.get("patch_artifact") or {}
         if failed_stage == "compile" and str(patch_artifact.get("strategy_used") or "") == "syntax_fix":
             failure_reason = "compile_failed_after_repair"
         verification["failure_reason"] = failure_reason
+        verification["failure_code"] = failure_code
+        verification["stderr_excerpt"] = stderr_excerpt
+        verification["retry_hint"] = retry_hint
         if compile_failure_bucket:
             verification["compile_failure_bucket"] = compile_failure_bucket
         state["attempts"] = list(state.get("attempts", [])) + [
@@ -913,6 +981,9 @@ def _verifier_node(ops: EngineOps):
                     "reason": failure_reason,
                     "failure_detail": failure_detail,
                     "compile_failure_bucket": compile_failure_bucket,
+                    "failure_code": failure_code,
+                    "stderr_excerpt": stderr_excerpt,
+                    "retry_hint": retry_hint,
                     "failure_taxonomy": failure_taxonomy,
                     "retryable": retryable,
                     "retry_budget_left": retry_budget_left,
@@ -933,6 +1004,9 @@ def _verifier_node(ops: EngineOps):
                 "detail": failure_detail,
                 "stderr_summary": failure_detail,
                 "compile_failure_bucket": compile_failure_bucket,
+                "failure_code": failure_code,
+                "stderr_excerpt": stderr_excerpt,
+                "retry_hint": retry_hint,
                 "failure_taxonomy": failure_taxonomy,
                 "attempt_no": attempt_no,
                 "previous_patch_id": patch_artifact.get("patch_id"),
@@ -1091,7 +1165,7 @@ def _route_after_verifier(state: dict[str, Any]) -> str:
 
 def _route_after_retry(state: dict[str, Any]) -> str:
     if int(state.get("retry_count", 0)) <= int(state.get("max_retries", 2)):
-        return "fixer"
+        return "memory_context"
     return "reporter"
 
 
@@ -1127,6 +1201,7 @@ def _build_attempt_summary(
         "failed_stage": failure_stage,
         "failure_reason": failure_reason,
         "failure_detail": failure_detail,
+        "failure_code": base_attempt.get("failure_code"),
         "memory_case_ids": base_attempt.get("memory_case_ids", []),
     }
 
@@ -1183,6 +1258,34 @@ def _to_int(value: Any, *, default: int) -> int:
 
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _resolve_focus_line_from_issues(issues: list[dict[str, Any]]) -> int:
+    for issue in issues:
+        try:
+            value = int(issue.get("line") or issue.get("startLine") or 0)
+        except Exception:
+            value = 0
+        if value > 0:
+            return value
+    return 1
+
+
+def _build_local_snippet_context(*, code_text: str, focus_line: int, window: int, source_id: str) -> dict[str, Any]:
+    lines = code_text.splitlines()
+    start_line = max(1, focus_line - window)
+    end_line = min(len(lines), focus_line + window) if lines else 1
+    snippet = "\n".join(lines[start_line - 1 : end_line]) if lines else ""
+    return {
+        "source_id": source_id,
+        "kind": "snippet_window",
+        "path": "snippet.java",
+        "startLine": start_line,
+        "endLine": end_line,
+        "content": snippet,
+        "token_count": max(1, int(len(snippet) / 4)) if snippet else 1,
+        "reason": "issue vicinity",
+    }
 
 
 def _full_state(state: dict[str, Any]) -> dict[str, Any]:

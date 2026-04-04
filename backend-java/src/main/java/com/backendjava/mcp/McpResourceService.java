@@ -28,15 +28,20 @@ public class McpResourceService {
 
     public McpEnvelope repoTree(String taskId, Integer depth) {
         long started = System.currentTimeMillis();
-        if (findTask(taskId) == null) {
+        ReviewTask task = findTask(taskId);
+        if (task == null) {
             return error("resource", "repo-tree", "task_not_found", "task not found", started);
         }
-        return error(
-                "resource",
-                "repo-tree",
-                "not_configured",
-                "Repository tree indexing is not configured for this task type.",
-                started);
+        int safeDepth = depth == null ? 2 : Math.max(1, Math.min(depth, 5));
+        Map<String, Object> tree = new LinkedHashMap<>();
+        tree.put("name", "snippet-repo");
+        tree.put("type", "directory");
+        tree.put("depth", safeDepth);
+        tree.put("children", List.of(Map.of(
+                "name", "snippet.java",
+                "type", "file",
+                "size", task.getCodeText() == null ? 0 : task.getCodeText().length())));
+        return ok("resource", "repo-tree", Map.of("tree", tree), started);
     }
 
     public McpEnvelope file(String taskId, String path, Integer startLine, Integer endLine) {
@@ -112,8 +117,7 @@ public class McpResourceService {
             return error("resource", "build-log-summary", "task_not_found", "task not found", started);
         }
         Map<String, Object> verification = asMap(task.getResult().get("verification"));
-        Map<String, Object> stageResults = asMap(verification.get("stage_results"));
-        Map<String, Object> compileResult = asMap(stageResults.get("compile"));
+        Map<String, Object> compileResult = findStageResult(verification, "compile");
         boolean configured = !compileResult.isEmpty();
 
         Map<String, Object> latestBuild = new LinkedHashMap<>();
@@ -139,8 +143,7 @@ public class McpResourceService {
         }
 
         Map<String, Object> verification = asMap(task.getResult().get("verification"));
-        Map<String, Object> stageResults = asMap(verification.get("stage_results"));
-        Map<String, Object> testResult = asMap(stageResults.get("test"));
+        Map<String, Object> testResult = findStageResult(verification, "test");
         boolean configured = !testResult.isEmpty();
 
         Map<String, Object> data = new LinkedHashMap<>();
@@ -257,6 +260,25 @@ public class McpResourceService {
             }
         }
         return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> findStageResult(Map<String, Object> verification, String targetStage) {
+        Object stagesValue = verification.get("stages");
+        if (!(stagesValue instanceof List<?> stages)) {
+            return Map.of();
+        }
+        for (Object item : stages) {
+            if (!(item instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, Object> stage = (Map<String, Object>) raw;
+            if (!targetStage.equals(String.valueOf(stage.getOrDefault("stage", "")))) {
+                continue;
+            }
+            return stage;
+        }
+        return Map.of();
     }
 
     private String sanitizeCode(String code) {

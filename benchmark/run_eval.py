@@ -134,15 +134,17 @@ def _execute_live_case(
         if status in {"COMPLETED", "FAILED"}:
             result = detail.get("result") if isinstance(detail.get("result"), dict) else {}
             summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+            delivery = result.get("delivery") if isinstance(result.get("delivery"), dict) else {}
             verification = result.get("verification") if isinstance(result.get("verification"), dict) else {}
             patch = result.get("patch") if isinstance(result.get("patch"), dict) else {}
             return {
-                "final_outcome": summary.get("final_outcome"),
-                "verified_level": summary.get("verified_level"),
+                "final_outcome": delivery.get("final_outcome") or summary.get("final_outcome"),
+                "verified_level": delivery.get("verified_level") or summary.get("verified_level"),
                 "retry_count": summary.get("retry_count", 0),
                 "failure_taxonomy": summary.get("failure_taxonomy"),
                 "issues": result.get("issues", []),
                 "patch": patch,
+                "delivery": delivery,
                 "verification": verification,
                 "tool_trace": result.get("tool_trace", []),
                 "llm_trace": result.get("llm_trace", []),
@@ -167,16 +169,16 @@ def _task_latency_seconds(created_at: Any, updated_at: Any) -> float:
 
 def _build_case_result(*, case_id: str, meta: dict[str, Any], row: dict[str, Any], default_mode: str) -> dict[str, Any]:
     issue_count = len(row.get("issues", [])) if isinstance(row.get("issues"), list) else 0
+    delivery = row.get("delivery") if isinstance(row.get("delivery"), dict) else {}
     patch = row.get("patch") if isinstance(row.get("patch"), dict) else {}
     verification = row.get("verification") if isinstance(row.get("verification"), dict) else {}
-    stage_results = verification.get("stage_results") if isinstance(verification.get("stage_results"), dict) else {}
     taxonomy = normalize_failure_taxonomy(row.get("failure_taxonomy"))
     tool_trace = row.get("tool_trace") if isinstance(row.get("tool_trace"), list) else []
     llm_trace = row.get("llm_trace") if isinstance(row.get("llm_trace"), list) else []
     expected_tools = [str(item) for item in meta.get("expected_detection", []) if str(item).strip()]
 
-    patch_diff = str(patch.get("unified_diff") or patch.get("content") or "")
-    verified_level = str(row.get("verified_level") or verification.get("verified_level") or "L0")
+    patch_diff = str(delivery.get("unified_diff") or patch.get("unified_diff") or patch.get("content") or "")
+    verified_level = str(row.get("verified_level") or delivery.get("verified_level") or verification.get("verified_level") or "L0")
 
     return {
         "case_id": case_id,
@@ -184,7 +186,7 @@ def _build_case_result(*, case_id: str, meta: dict[str, Any], row: dict[str, Any
         "issue_count": issue_count,
         "detection_hit": issue_count > 0,
         "patch_generated": bool(patch_diff.strip()),
-        "patch_apply_pass": _stage_passed(stage_results, "patch_apply"),
+        "patch_apply_pass": _stage_passed(verification, "patch_apply"),
         "l1_pass": _verified_at_least(verified_level, "L1"),
         "l2_pass": _verified_at_least(verified_level, "L2"),
         "l3_pass": _verified_at_least(verified_level, "L3"),
@@ -333,10 +335,16 @@ def _verified_at_least(actual: str, target: str) -> bool:
     return order.get(actual, 0) >= order.get(target, 0)
 
 
-def _stage_passed(stage_results: dict[str, Any], stage: str) -> bool:
-    stage_item = stage_results.get(stage)
-    if isinstance(stage_item, dict):
-        return str(stage_item.get("status") or "") == "passed"
+def _stage_passed(verification: dict[str, Any], stage: str) -> bool:
+    stages = verification.get("stages")
+    if not isinstance(stages, list):
+        return False
+    for item in stages:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("stage") or "") != stage:
+            continue
+        return str(item.get("status") or "") == "passed"
     return False
 
 

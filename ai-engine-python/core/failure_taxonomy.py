@@ -79,7 +79,12 @@ def build_failure_taxonomy(
 
     if normalized_reason in {"wrong_tool_selection", "tool_mismatch"}:
         return {"bucket": "F8_wrong_tool_selection", "code": normalized_reason, "explanation": failure_detail}
-    if normalized_reason in {"insufficient_context_for_semantic_fix", "insufficient_context"}:
+    if normalized_reason in {
+        "insufficient_context_for_semantic_fix",
+        "insufficient_context",
+        "action_loop_exhausted",
+        "context_budget_exhausted",
+    }:
         return {"bucket": "F7_context_insufficient", "code": normalized_reason, "explanation": failure_detail}
     if normalized_reason in {
         "duplicate_patch_candidate",
@@ -88,6 +93,9 @@ def build_failure_taxonomy(
         "semantic_repair_unsupported",
         "no_semantic_candidate",
         "unsafe_default_return",
+        "no_valid_patch",
+        "invalid_diff",
+        "llm_call_failed",
     }:
         return {"bucket": "F2_wrong_patch", "code": normalized_reason, "explanation": failure_detail}
     if issue_count == 0 and final_outcome.startswith("failed"):

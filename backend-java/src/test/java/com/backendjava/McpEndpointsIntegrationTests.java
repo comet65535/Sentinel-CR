@@ -30,7 +30,7 @@ class McpEndpointsIntegrationTests {
                 .uri("/api/reviews")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of(
-                        "codeText", "public class Demo { }",
+                        "codeText", "class snippet { }",
                         "language", "java",
                         "sourceType", "snippet"))
                 .exchange()
@@ -56,9 +56,9 @@ class McpEndpointsIntegrationTests {
                 .getResponseBody();
 
         assertThat(repoTreeEnvelope).isNotNull();
-        assertThat(repoTreeEnvelope).containsEntry("ok", false);
+        assertThat(repoTreeEnvelope).containsEntry("ok", true);
         assertThat(repoTreeEnvelope).containsEntry("kind", "resource");
-        assertEnvelopeErrorCode(repoTreeEnvelope, "not_configured");
+        assertThat(repoTreeEnvelope.get("data")).isInstanceOf(Map.class);
 
         Map<String, Object> fileEnvelope = webTestClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -196,7 +196,7 @@ class McpEndpointsIntegrationTests {
             Map<String, Object> envelope = webTestClient.post()
                     .uri(endpoint)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(Map.of("taskId", taskId, "symbol", "Demo"))
+                    .bodyValue(Map.of("taskId", taskId, "symbol", "snippet"))
                     .exchange()
                     .expectStatus()
                     .isOk()
@@ -204,8 +204,8 @@ class McpEndpointsIntegrationTests {
                     .returnResult()
                     .getResponseBody();
             assertThat(envelope).isNotNull();
-            assertThat(envelope).containsEntry("ok", false);
-            assertEnvelopeErrorCode(envelope, "not_configured");
+            assertThat(envelope).containsEntry("ok", true);
+            assertThat(envelope.get("data")).isInstanceOf(Map.class);
         }
     }
 

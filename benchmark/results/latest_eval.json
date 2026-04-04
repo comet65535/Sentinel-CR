@@ -1,13 +1,13 @@
 {
   "schema_version": "day7.eval.v1",
-  "generated_at": "2026-04-03T14:13:42.036460+00:00",
+  "generated_at": "2026-04-04T09:31:04.952071+00:00",
   "mode": "offline",
   "ok": true,
   "error": null,
   "summary": {
-    "case_count": 2,
+    "case_count": 8,
     "ok_cases": 0,
-    "failed_cases": 2
+    "failed_cases": 8
   },
   "metrics": {
     "detection_precision": 0.0,
@@ -26,7 +26,7 @@
     "tool_calling_precision": 0.0
   },
   "funnel": {
-    "total": 2,
+    "total": 8,
     "stages": {
       "detected": {
         "count": 0,
@@ -64,6 +64,114 @@
   },
   "cases": [
     {
+      "case_id": "case_001_missing_return_string",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
+      "case_id": "case_004_simple_type_mismatch",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
+      "case_id": "case_006_sql_injection",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
+      "case_id": "case_008_resource_leak",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
       "case_id": "case_002_missing_return_boolean",
       "mode": "offline",
       "issue_count": 0,
@@ -92,6 +200,60 @@
     },
     {
       "case_id": "case_007_n_plus_one",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
+      "case_id": "case_003_uninitialized_local",
+      "mode": "offline",
+      "issue_count": 0,
+      "detection_hit": false,
+      "patch_generated": false,
+      "patch_apply_pass": false,
+      "l1_pass": false,
+      "l2_pass": false,
+      "l3_pass": false,
+      "l4_pass": false,
+      "final_verified": false,
+      "retry_count": 0,
+      "latency_sec": 0.0,
+      "token_cost": 0,
+      "verified_level": "L0",
+      "failure_taxonomy": {
+        "bucket": "none",
+        "code": null,
+        "explanation": null
+      },
+      "tool_trace": [],
+      "expected_tools": [
+        "analyzer",
+        "planner"
+      ]
+    },
+    {
+      "case_id": "case_005_null_pointer",
       "mode": "offline",
       "issue_count": 0,
       "detection_hit": false,

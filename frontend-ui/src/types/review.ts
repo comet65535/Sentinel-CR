@@ -65,6 +65,17 @@ export interface ReviewSummary {
   failure_taxonomy: FailureTaxonomy
 }
 
+export interface DeliveryResult {
+  unified_diff: string
+  verified_level: string
+  verification_stages: Array<Record<string, unknown>>
+  final_outcome: string
+  failed_stage?: string | null
+  failure_code?: string | null
+  failure_reason?: string | null
+  retryable?: boolean
+}
+
 export interface ReviewMemory {
   matches: Record<string, unknown>[]
   short_term?: Record<string, unknown>
@@ -75,6 +86,7 @@ export interface ReviewMemory {
 
 export interface ReviewResult {
   engine: string
+  delivery: DeliveryResult
   summary: ReviewSummary
   analyzer: Record<string, unknown>
   analyzer_evidence: Record<string, unknown>
@@ -95,6 +107,8 @@ export interface ReviewResult {
   patch: Record<string, unknown>
   attempts: Record<string, unknown>[]
   verification: Record<string, unknown> | null
+  user_events?: Record<string, unknown>[]
+  debug_events?: Record<string, unknown>[]
 }
 
 export interface CreateReviewRequest {

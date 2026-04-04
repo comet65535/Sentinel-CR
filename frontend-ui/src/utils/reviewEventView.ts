@@ -466,6 +466,7 @@ export function buildReadableStageTimeline(
 
 export function extractResultStats(reviewResult: Record<string, unknown>): ResultStats {
   const summary = asRecord(reviewResult.summary)
+  const delivery = asRecord(reviewResult.delivery)
   const memory = asRecord(reviewResult.memory)
   const patch = asRecord(reviewResult.patch)
 
@@ -474,12 +475,12 @@ export function extractResultStats(reviewResult: Record<string, unknown>): Resul
     repairPlanCount: toArrayCount(reviewResult.repair_plan),
     memoryMatchCount: toArrayCount(memory.matches),
     attemptCount: toArrayCount(reviewResult.attempts),
-    patchStatus: toText(patch.status, '-'),
-    verifiedLevel: toText(summary.verified_level, 'L0'),
-    finalOutcome: toText(summary.final_outcome, '-'),
+    patchStatus: toText(patch.status, delivery.unified_diff ? 'generated' : '-'),
+    verifiedLevel: toText(delivery.verified_level ?? summary.verified_level, 'L0'),
+    finalOutcome: toText(delivery.final_outcome ?? summary.final_outcome, '-'),
     retryCount: toNumber(summary.retry_count),
-    failedStage: toText(summary.failed_stage, '-'),
-    failureReason: toText(summary.failure_reason, '-'),
+    failedStage: toText(delivery.failed_stage ?? summary.failed_stage, '-'),
+    failureReason: toText(delivery.failure_reason ?? summary.failure_reason, '-'),
     failureDetail: toText(summary.failure_detail, '-'),
     retryExhausted: Boolean(summary.retry_exhausted),
     noFixNeeded: Boolean(summary.no_fix_needed),

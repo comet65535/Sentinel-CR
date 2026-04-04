@@ -4,23 +4,6 @@ import json
 from typing import Any
 
 
-TOOL_NAMES = [
-    "build_issue_graph",
-    "analyze_ast",
-    "run_semgrep",
-    "resolve_symbol",
-    "fetch_context",
-    "get_repo_profile",
-    "search_case_memory",
-    "search_short_term_memory",
-    "apply_patch",
-    "compile_java",
-    "lint_java",
-    "run_tests",
-    "security_rescan",
-]
-
-
 def build_fixer_prompt_payload(
     *,
     code_text: str,
@@ -38,49 +21,36 @@ def build_fixer_prompt_payload(
     action_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
-        "role": "Sentinel-CR LLM Orchestrator",
+        "role": "Sentinel-CR Verified Patch Agent",
+        "goal": "Return one valid unified diff patch that directly addresses the planned issues.",
         "hard_rules": [
-            "candidate_patch must be unified diff and start with diff --git",
-            "forbid whitespace-only, no-op, comment-only patch",
-            "forbid repeating previous patch hash/content",
-            "do not change public API/method signature unless user explicitly allows",
-            "prioritize latest verifier failure",
-            "if context is insufficient, request tool/action first",
-            "explanation must state why patch should pass current verifier stage",
+            "Output must be valid JSON only.",
+            "Patch must be unified diff and start with diff --git.",
+            "Do not produce no-op/comment-only patch.",
+            "Do not repeat a previously failed patch.",
+            "Prefer minimal safe change set.",
+            "Respect user constraints and repo rules first.",
         ],
-        "tool_catalog": TOOL_NAMES,
-        "prompt_injection_order": [
-            "repo_rules",
-            "user_constraints",
-            "latest_verifier_failure",
-            "selected_context",
-            "matched_cases",
-            "matched_standards",
-        ],
-        "conversation_input": {
+        "response_schema": {
+            "unified_diff": "string",
+            "explanation": "short string",
+            "risk_level": "low|medium|high",
+            "target_files": ["snippet.java"],
+        },
+        "inputs": {
             "message_text": message_text or "",
             "code_text": code_text,
-        },
-        "attempt_no": attempt_no,
-        "repo_rules": repo_profile or {},
-        "latest_verifier_failure": last_failure or {},
-        "selected_context": selected_context or [],
-        "matched_cases": memory_matches,
-        "matched_standards": standards_matches,
-        "planner_hint": {
-            "repair_plan": repair_plan,
+            "attempt_no": attempt_no,
             "issues": issues,
+            "repair_plan": repair_plan,
             "symbols": symbols,
             "context_summary": context_summary,
-        },
-        "action_history": action_history or [],
-        "response_schema": {
-            "thought_summary": "string",
-            "next_action": "tool name from catalog or finalize_patch or fail",
-            "action_args": "object",
-            "need_more_context": "boolean",
-            "candidate_patch": "string or null",
-            "explanation": "string",
+            "selected_context": selected_context or [],
+            "last_failure": last_failure or {},
+            "memory_matches": memory_matches,
+            "standards_matches": standards_matches,
+            "repo_profile": repo_profile or {},
+            "action_history": action_history or [],
         },
     }
 
@@ -90,9 +60,8 @@ def build_fixer_messages(prompt_payload: dict[str, Any]) -> list[dict[str, str]]
         {
             "role": "system",
             "content": (
-                "You are Sentinel-CR orchestrator. Always output strict JSON only. "
-                "Prefer tool actions before patching when uncertain. "
-                "Use finalize_patch only when candidate_patch is valid unified diff."
+                "You are Sentinel-CR patch generator. "
+                "You must return strict JSON that matches response_schema and includes unified_diff."
             ),
         },
         {

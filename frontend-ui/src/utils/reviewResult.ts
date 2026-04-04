@@ -20,6 +20,7 @@ export function buildAccumulatedResult(events: ReviewEvent[]): Record<string, un
       Object.assign(result, payload.result as Record<string, unknown>)
     }
     if (payload.issue_graph && typeof payload.issue_graph === 'object') result.issue_graph = payload.issue_graph
+    if (payload.delivery && typeof payload.delivery === 'object') result.delivery = payload.delivery
     if (payload.context_budget && typeof payload.context_budget === 'object') result.context_budget = payload.context_budget
     if (payload.verification && typeof payload.verification === 'object') result.verification = payload.verification
     if (payload.patch && typeof payload.patch === 'object') result.patch = payload.patch

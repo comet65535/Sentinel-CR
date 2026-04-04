@@ -37,6 +37,7 @@ def update_short_term_memory(
         "retry_context": "retry_context",
         "user_constraints": "user_constraints",
         "token_usage": "token_usage",
+        "latest_code": "latest_code",
     }
     key = mapping.get(snapshot_type, snapshot_type)
     existing[key] = deepcopy(payload)
@@ -44,7 +45,16 @@ def update_short_term_memory(
     conversation_id = _resolve_conversation_id(state)
     if conversation_id:
         persisted = _load_thread_state(conversation_id)
+        latest_code_payload = existing.get("latest_code")
         latest_code = persisted.get("latest_code")
+        if isinstance(latest_code_payload, dict):
+            latest_code_candidate = str(latest_code_payload.get("code_text") or "").strip()
+            if latest_code_candidate:
+                latest_code = latest_code_candidate
+        elif isinstance(state, dict):
+            latest_code_candidate = str(state.get("code_text") or "").strip()
+            if latest_code_candidate:
+                latest_code = latest_code_candidate
         latest_patch = existing.get("latest_patch") if isinstance(existing.get("latest_patch"), dict) else persisted.get("latest_patch")
         latest_failure = (
             existing.get("latest_verifier_failure")

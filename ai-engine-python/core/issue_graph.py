@@ -21,6 +21,8 @@ class IssueNode(TypedDict):
     strategy_hint: str
     requires_test: bool
     requires_context: bool
+    fix_batch: int
+    conflict_group: str | None
 
 
 class IssueEdge(TypedDict):
@@ -123,6 +125,8 @@ def build_issue_graph(
             "strategy_hint": strategy_hint,
             "requires_test": requires_test,
             "requires_context": fix_scope in {"multi_file", "unknown"},
+            "fix_batch": 1,
+            "conflict_group": None,
         }
         nodes.append(node)
 
@@ -130,6 +134,8 @@ def build_issue_graph(
 
     _populate_dependencies(nodes)
     _populate_conflicts(nodes)
+    _populate_fix_batches(nodes)
+    _populate_conflict_groups(nodes)
     _sort_node_relations(nodes)
 
     edges = _build_edges(nodes_by_id)
@@ -421,6 +427,68 @@ def _sort_node_relations(nodes: list[IssueNode]) -> None:
         node["depends_on"] = sorted(set(node["depends_on"]))
         node["conflicts_with"] = sorted(set(node["conflicts_with"]))
         node["related_symbols"] = sorted(set(node["related_symbols"]))
+
+
+def _populate_fix_batches(nodes: list[IssueNode]) -> None:
+    node_map = {node["issue_id"]: node for node in nodes}
+
+    unresolved = set(node_map.keys())
+    # Dependency-aware layering: node batch is 1 + max(dep batches).
+    while unresolved:
+        progressed = False
+        for issue_id in list(unresolved):
+            node = node_map[issue_id]
+            deps = [dep for dep in node.get("depends_on", []) if dep in node_map]
+            if any(dep in unresolved for dep in deps):
+                continue
+            batch = 1
+            for dep in deps:
+                batch = max(batch, int(node_map[dep].get("fix_batch", 1)) + 1)
+            node["fix_batch"] = batch
+            unresolved.remove(issue_id)
+            progressed = True
+        if not progressed:
+            # Cycles fallback.
+            for issue_id in list(unresolved):
+                node_map[issue_id]["fix_batch"] = 1
+                unresolved.remove(issue_id)
+
+
+def _populate_conflict_groups(nodes: list[IssueNode]) -> None:
+    node_map = {node["issue_id"]: node for node in nodes}
+    visited: set[str] = set()
+    group_index = 1
+    for node in nodes:
+        issue_id = node["issue_id"]
+        if issue_id in visited:
+            continue
+        conflict_neighbors = _collect_conflict_component(issue_id, node_map)
+        for member in conflict_neighbors:
+            visited.add(member)
+        if len(conflict_neighbors) <= 1:
+            node_map[issue_id]["conflict_group"] = None
+            continue
+        group_id = f"CONFLICT-{group_index}"
+        group_index += 1
+        for member in conflict_neighbors:
+            node_map[member]["conflict_group"] = group_id
+
+
+def _collect_conflict_component(start_id: str, node_map: dict[str, IssueNode]) -> set[str]:
+    stack = [start_id]
+    component: set[str] = set()
+    while stack:
+        issue_id = stack.pop()
+        if issue_id in component:
+            continue
+        component.add(issue_id)
+        node = node_map.get(issue_id)
+        if not node:
+            continue
+        for peer in node.get("conflicts_with", []):
+            if peer in node_map and peer not in component:
+                stack.append(peer)
+    return component
 
 
 def _build_edges(nodes_by_id: dict[str, IssueNode]) -> list[IssueEdge]:

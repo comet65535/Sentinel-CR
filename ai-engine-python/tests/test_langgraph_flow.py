@@ -19,14 +19,18 @@ def _collect_events(request: InternalReviewRunRequest) -> list[dict]:
 def test_langgraph_reports_llm_disabled_without_fake_patch() -> None:
     request = InternalReviewRunRequest(
         taskId="rev_langgraph_llm_disabled",
-        codeText="class snippet { void run(){} }",
+        codeText="class snippet { int run(){ return 1 } }",
         language="java",
         sourceType="snippet",
         options={"llm_enabled": False},
     )
     events = _collect_events(request)
     event_types = [item["eventType"] for item in events]
-    assert event_types[:2] == ["analysis_started", "fixer_started"]
+    assert event_types[0] == "analysis_started"
+    assert "analyzer_completed" in event_types
+    assert "planner_completed" in event_types
+    assert "case_memory_completed" in event_types
+    assert "fixer_started" in event_types
     assert "fixer_failed" in event_types
     assert event_types[-1] == "review_completed"
     result = events[-1]["payload"]["result"]
@@ -105,7 +109,7 @@ def test_langgraph_retry_path_keeps_closed_loop(monkeypatch) -> None:
 
     request = InternalReviewRunRequest(
         taskId="rev_langgraph_retry",
-        codeText="class snippet { void run(){} }",
+        codeText="class snippet { int run(){ return 1 } }",
         language="java",
         sourceType="snippet",
         options={"enable_verifier": True, "max_retries": 1},

@@ -96,6 +96,13 @@ const resultStats = computed(() => {
 
 const patchContent = computed(() => {
   if (!reviewResult.value) return ''
+  const delivery = reviewResult.value.delivery
+  if (typeof delivery === 'object' && delivery !== null) {
+    const record = delivery as Record<string, unknown>
+    if (typeof record.unified_diff === 'string' && record.unified_diff.trim()) {
+      return record.unified_diff
+    }
+  }
   const patch = reviewResult.value.patch
   if (typeof patch !== 'object' || patch === null) return ''
   const patchRecord = patch as Record<string, unknown>
@@ -419,7 +426,12 @@ onBeforeUnmount(() => {
       <header class="chat-header">
         <div class="header-actions">
           <span class="line-label">当前进度：</span>
-          <button class="status-line" type="button" @click="openDetailPanel">
+          <button
+            class="status-line"
+            type="button"
+            :disabled="!debugMode"
+            @click="debugMode && openDetailPanel()"
+          >
             <span v-if="isProcessing" class="pulse-dot" />
             <span>{{ currentStatusLine }}</span>
           </button>
@@ -427,7 +439,14 @@ onBeforeUnmount(() => {
 
         <div class="header-actions secondary">
           <span class="task-text">任务：{{ taskId || '-' }} · {{ toStatusText(taskStatus) }}</span>
-          <button class="process-btn" type="button" @click="openDetailPanel">查看过程</button>
+          <button
+            v-if="debugMode"
+            class="process-btn"
+            type="button"
+            @click="openDetailPanel"
+          >
+            查看过程
+          </button>
           <label class="debug-toggle">
             <input v-model="debugMode" type="checkbox" />
             <span>Debug</span>
@@ -470,6 +489,7 @@ onBeforeUnmount(() => {
             :stats="resultStats"
             :patch-content="patchContent"
             @open-process="openDetailPanel"
+            :debug-mode="debugMode"
           />
         </article>
 
@@ -537,6 +557,11 @@ onBeforeUnmount(() => {
   font-weight: 600;
   cursor: pointer;
   justify-self: start;
+}
+
+.status-line:disabled {
+  opacity: 0.75;
+  cursor: default;
 }
 
 .header-actions {
