@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any, Literal
 
@@ -76,6 +76,9 @@ class EngineState(BaseModel):
     context_budget: dict[str, Any] = Field(default_factory=dict)
     selected_context: list[dict[str, Any]] = Field(default_factory=list)
     memory_hits: dict[str, Any] = Field(default_factory=dict)
+    standards_hits: list[dict[str, Any]] = Field(default_factory=list)
+    retry_hints: dict[str, Any] = Field(default_factory=dict)
+    execution_stages: dict[str, Any] = Field(default_factory=dict)
     tool_trace: list[dict[str, Any]] = Field(default_factory=list)
     llm_trace: list[dict[str, Any]] = Field(default_factory=list)
     action_history: list[dict[str, Any]] = Field(default_factory=list)

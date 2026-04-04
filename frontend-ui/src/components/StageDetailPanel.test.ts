@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import StageDetailPanel from './StageDetailPanel.vue'
 
@@ -20,11 +20,16 @@ describe('StageDetailPanel', () => {
           TokenContextPanel: true,
           ToolTracePanel: true,
           BenchmarkPanel: true,
+          ExecutionTimelineCard: true,
+          VerificationStagesCard: true,
+          RetryHintCard: true,
+          StandardsHitsCard: true,
         },
       },
     })
-    expect(wrapper.text()).not.toContain('Issue Graph')
     expect(wrapper.text()).not.toContain('Memory')
+    expect(wrapper.text()).not.toContain('Context')
+    expect(wrapper.text()).not.toContain('Standards')
     expect(wrapper.text()).not.toContain('Tool Trace')
     expect(wrapper.text()).not.toContain('Raw Payload')
   })
@@ -39,11 +44,16 @@ describe('StageDetailPanel', () => {
           TokenContextPanel: true,
           ToolTracePanel: true,
           BenchmarkPanel: true,
+          ExecutionTimelineCard: true,
+          VerificationStagesCard: true,
+          RetryHintCard: true,
+          StandardsHitsCard: true,
         },
       },
     })
-    expect(wrapper.text()).toContain('Issue Graph')
     expect(wrapper.text()).toContain('Memory')
+    expect(wrapper.text()).toContain('Context')
+    expect(wrapper.text()).toContain('Standards')
     expect(wrapper.text()).toContain('Tool Trace')
     expect(wrapper.text()).toContain('Raw Payload')
   })

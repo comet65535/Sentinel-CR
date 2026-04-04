@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -26,6 +27,7 @@ class EngineOps:
     compose_day2_output: Callable[..., dict[str, Any]]
     run_planner_agent: Callable[..., dict[str, Any]]
     retrieve_case_matches: Callable[..., list[dict[str, Any]]]
+    search_standards: Callable[..., list[dict[str, Any]]]
     run_fixer_agent: Callable[..., dict[str, Any]]
     run_verifier_agent: Callable[..., dict[str, Any]]
     build_review_completed_payload: Callable[[EngineState], dict[str, Any]]
@@ -96,6 +98,7 @@ def build_langgraph(ops: EngineOps):
     graph.add_node("memory_context", _memory_node(ops))
     graph.add_node("fixer", _fixer_node(ops))
     graph.add_node("verifier", _verifier_node(ops))
+    graph.add_node("retry_reflection", _retry_reflection_node(ops))
     graph.add_node("retry_router", _retry_router_node())
     graph.add_node("reporter", _reporter_node(ops))
 
@@ -105,7 +108,12 @@ def build_langgraph(ops: EngineOps):
     graph.add_edge("planner", "memory_context")
     graph.add_edge("memory_context", "fixer")
     graph.add_conditional_edges("fixer", _route_after_fixer, {"verifier": "verifier", "reporter": "reporter"})
-    graph.add_conditional_edges("verifier", _route_after_verifier, {"retry_router": "retry_router", "reporter": "reporter"})
+    graph.add_conditional_edges(
+        "verifier",
+        _route_after_verifier,
+        {"retry_reflection": "retry_reflection", "reporter": "reporter"},
+    )
+    graph.add_edge("retry_reflection", "retry_router")
     graph.add_conditional_edges(
         "retry_router",
         _route_after_retry,
@@ -200,6 +208,12 @@ def _bootstrap_node(ops: EngineOps):
                 payload={"source": "python-engine", "stage": "bootstrap_state", "language": state["language"]},
             ),
         )
+        _record_execution_stage(
+            state,
+            stage_id="intake_received",
+            status="running",
+            summary="Request received and bootstrap state initialized.",
+        )
         if state.get("context_budget"):
             _record_debug_event(
                 state,
@@ -227,6 +241,12 @@ def _bootstrap_node(ops: EngineOps):
                 "task_id": state.get("task_id"),
             },
         )
+        _record_execution_stage(
+            state,
+            stage_id="intake_received",
+            status="passed",
+            summary="Bootstrap completed.",
+        )
         return _full_state(state)
 
     return _node
@@ -234,6 +254,12 @@ def _bootstrap_node(ops: EngineOps):
 
 def _analyzer_node(ops: EngineOps):
     async def _node(state: dict[str, Any]) -> dict[str, Any]:
+        _record_execution_stage(
+            state,
+            stage_id="analyzer_running",
+            status="running",
+            summary="Analyzer is parsing syntax, symbols, and diagnostics.",
+        )
         _record_debug_event(
             state,
             "langgraph_node_started",
@@ -411,7 +437,15 @@ def _analyzer_node(ops: EngineOps):
                 payload={"source": "python-engine", "stage": "analyzer_pipeline", "analyzerSummary": state["analyzer_summary"]},
             ),
         )
-        state["no_fix_needed"] = len(state["issues"]) == 0
+        allow_no_fix_needed = bool(state.get("options", {}).get("allow_no_fix_needed", False))
+        has_user_constraints = bool(str(state.get("message_text") or "").strip())
+        state["no_fix_needed"] = bool(allow_no_fix_needed and len(state["issues"]) == 0 and not has_user_constraints)
+        _record_execution_stage(
+            state,
+            stage_id="analyzer_running",
+            status="passed",
+            summary=f"Analyzer completed with {len(state['issues'])} detected issues.",
+        )
         return _full_state(state)
 
     return _node
@@ -419,6 +453,12 @@ def _analyzer_node(ops: EngineOps):
 
 def _planner_node(ops: EngineOps):
     async def _node(state: dict[str, Any]) -> dict[str, Any]:
+        _record_execution_stage(
+            state,
+            stage_id="issue_graph_building",
+            status="running",
+            summary="Building issue graph and repair batches.",
+        )
         _record_debug_event(
             state,
             "langgraph_node_started",
@@ -492,6 +532,12 @@ def _planner_node(ops: EngineOps):
                 },
             ),
         )
+        _record_execution_stage(
+            state,
+            stage_id="issue_graph_building",
+            status="passed",
+            summary=f"Issue graph ready with {len(state['repair_plan'])} repair tasks.",
+        )
         return _full_state(state)
 
     return _node
@@ -499,6 +545,12 @@ def _planner_node(ops: EngineOps):
 
 def _memory_node(ops: EngineOps):
     async def _node(state: dict[str, Any]) -> dict[str, Any]:
+        _record_execution_stage(
+            state,
+            stage_id="context_loading",
+            status="running",
+            summary="Loading context within token budget.",
+        )
         _record_debug_event(
             state,
             "langgraph_node_started",
@@ -508,6 +560,12 @@ def _memory_node(ops: EngineOps):
         if state.get("no_fix_needed"):
             return _full_state(state)
         attempt_no = _attempt_no(state)
+        _record_execution_stage(
+            state,
+            stage_id="memory_matching",
+            status="running",
+            summary="Matching similar historical repair cases.",
+        )
         _record_event(
             state,
             build_event(
@@ -557,6 +615,12 @@ def _memory_node(ops: EngineOps):
                 status="RUNNING",
                 payload={"source": "python-engine", "stage": "memory", "attempt_no": attempt_no, "match_count": len(state["memory_matches"])},
             ),
+        )
+        _record_execution_stage(
+            state,
+            stage_id="memory_matching",
+            status="passed",
+            summary=f"Case memory matched {len(state['memory_matches'])} candidates.",
         )
         state["repo_profile"] = ops.resolve_repo_profile(state.get("metadata", {}), state.get("options", {})) or {}
         if state["repo_profile"]:
@@ -666,6 +730,51 @@ def _memory_node(ops: EngineOps):
                 },
             )
 
+        _record_execution_stage(
+            state,
+            stage_id="context_loading",
+            status="passed",
+            summary=f"Context ready with {len(state.get('selected_context', []))} selected slices.",
+        )
+        _record_execution_stage(
+            state,
+            stage_id="standards_retrieving",
+            status="running",
+            summary="Retrieving standards knowledge hits.",
+        )
+        standards_query = " ".join(
+            [
+                str(state.get("message_text") or ""),
+                " ".join(str(item.get("message") or "") for item in state.get("issues", [])[:5]),
+                str(state.get("code_text") or "")[:400],
+            ]
+        ).strip()
+        standards_hits = ops.search_standards(standards_query, limit=3) if standards_query else []
+        state["standards_hits"] = [item for item in standards_hits if isinstance(item, dict)]
+        _record_event(
+            state,
+            build_event(
+                task_id=state["task_id"],
+                event_type="standards_hits_updated",
+                message="standards hits updated",
+                status="RUNNING",
+                payload={
+                    "source": "python-engine",
+                    "stage": "standards",
+                    "hit_count": len(state["standards_hits"]),
+                    "sources": sorted(
+                        {str(item.get("source") or "unknown") for item in state["standards_hits"]}
+                    ),
+                },
+            ),
+        )
+        _record_execution_stage(
+            state,
+            stage_id="standards_retrieving",
+            status="passed",
+            summary=f"Retrieved {len(state['standards_hits'])} standards hits.",
+            details={"hit_count": len(state["standards_hits"])},
+        )
         return _full_state(state)
 
     return _node
@@ -673,6 +782,12 @@ def _memory_node(ops: EngineOps):
 
 def _fixer_node(ops: EngineOps):
     async def _node(state: dict[str, Any]) -> dict[str, Any]:
+        _record_execution_stage(
+            state,
+            stage_id="fixer_generating_patch",
+            status="running",
+            summary="LLM is generating a patch from evidence and constraints.",
+        )
         _record_debug_event(
             state,
             "langgraph_node_started",
@@ -713,6 +828,8 @@ def _fixer_node(ops: EngineOps):
             options=state.get("options", {}),
             message_text=state.get("message_text"),
             action_history=state.get("action_history", []),
+            standards_matches=state.get("standards_hits", []),
+            retry_hints=state.get("retry_hints", {}),
         )
         if isinstance(fixer_output.get("llm_trace"), list):
             state["llm_trace"] = list(state.get("llm_trace", [])) + [
@@ -769,6 +886,16 @@ def _fixer_node(ops: EngineOps):
                     },
                 ),
             )
+            _record_execution_stage(
+                state,
+                stage_id="fixer_generating_patch",
+                status="failed",
+                summary="Patch generation failed.",
+                details={
+                    "failure_reason": failed_attempt.get("failure_reason"),
+                    "failure_detail": failed_attempt.get("failure_detail"),
+                },
+            )
             return _full_state(state)
 
         state["short_term_memory"] = ops.update_short_term_memory(state, snapshot_type="patch", payload=state["patch_artifact"] or {})
@@ -804,6 +931,13 @@ def _fixer_node(ops: EngineOps):
                     "tool_trace_count": len(state.get("tool_trace", [])),
                 },
             ),
+        )
+        _record_execution_stage(
+            state,
+            stage_id="fixer_generating_patch",
+            status="passed",
+            summary="Patch generated and ready for verifier.",
+            details={"patch_id": (state["patch_artifact"] or {}).get("patch_id")},
         )
         if not state.get("enable_verifier", False):
             state["attempts"] = list(state.get("attempts", [])) + [
@@ -849,6 +983,58 @@ def _verifier_node(ops: EngineOps):
                 },
             ),
         )
+
+        execution_stage_map = {
+            "patch_apply": "patch_apply_running",
+            "compile": "compile_running",
+            "lint": "lint_running",
+            "test": "test_running",
+            "security_rescan": "security_rescan_running",
+        }
+
+        def _on_stage_update(stage_payload: dict[str, Any]) -> None:
+            stage_name = str(stage_payload.get("stage") or "")
+            stage_status = str(stage_payload.get("status") or "pending")
+            execution_stage_id = execution_stage_map.get(stage_name)
+            if execution_stage_id:
+                _record_execution_stage(
+                    state,
+                    stage_id=execution_stage_id,
+                    status=stage_status,
+                    summary=str(stage_payload.get("summary") or f"{stage_name} {stage_status}"),
+                    details={
+                        "failure_code": stage_payload.get("failure_code"),
+                        "skip_reason": stage_payload.get("skip_reason"),
+                        "stderr_excerpt": stage_payload.get("stderr_excerpt"),
+                        "retry_hint": stage_payload.get("retry_hint"),
+                    },
+                )
+            if stage_status == "running":
+                event_type = f"{stage_name}_started"
+                message = f"{stage_name} started"
+            elif stage_status == "failed":
+                event_type = f"{stage_name}_failed"
+                message = f"{stage_name} failed"
+            else:
+                event_type = f"{stage_name}_completed"
+                message = f"{stage_name} completed"
+            _record_event(
+                state,
+                build_event(
+                    task_id=state["task_id"],
+                    event_type=event_type,
+                    message=message,
+                    status="RUNNING",
+                    payload={
+                        "source": "python-engine",
+                        "stage": "verifier",
+                        "attempt_no": attempt_no,
+                        "target_stage": stage_name,
+                        **stage_payload,
+                    },
+                ),
+            )
+
         verifier_options = dict(state.get("options", {}))
         verifier_options["enable_security_rescan"] = bool(state.get("enable_security_rescan", False))
         verification = ops.run_verifier_agent(
@@ -856,56 +1042,9 @@ def _verifier_node(ops: EngineOps):
             patch_artifact=state.get("patch_artifact"),
             options=verifier_options,
             repo_profile=state.get("repo_profile", {}),
+            stage_callback=_on_stage_update,
         )
         state["verification_result"] = verification
-        for stage_result in verification.get("stages", []):
-            stage_name = str(stage_result.get("stage"))
-            stage_status = str(stage_result.get("status"))
-            _record_event(
-                state,
-                build_event(
-                    task_id=state["task_id"],
-                    event_type=f"{stage_name}_started",
-                    message=f"{stage_name} started",
-                    status="RUNNING",
-                    payload={"source": "python-engine", "stage": "verifier", "attempt_no": attempt_no, "target_stage": stage_name},
-                ),
-            )
-            payload = {
-                "source": "python-engine",
-                "stage": "verifier",
-                "attempt_no": attempt_no,
-                "target_stage": stage_name,
-                "status": stage_status,
-                "exit_code": stage_result.get("exit_code"),
-                "stdout_summary": stage_result.get("stdout_summary", ""),
-                "stderr_summary": stage_result.get("stderr_summary", ""),
-                "reason": stage_result.get("reason"),
-                "retryable": bool(stage_result.get("retryable", False)),
-            }
-            if stage_status in {"passed", "skipped"}:
-                _record_event(
-                    state,
-                    build_event(
-                        task_id=state["task_id"],
-                        event_type=f"{stage_name}_completed",
-                        message=f"{stage_name} {'skipped' if stage_status == 'skipped' else 'completed'}",
-                        status="RUNNING",
-                        payload=payload,
-                    ),
-                )
-            else:
-                _record_event(
-                    state,
-                    build_event(
-                        task_id=state["task_id"],
-                        event_type=f"{stage_name}_failed",
-                        message=f"{stage_name} failed",
-                        status="RUNNING",
-                        payload=payload,
-                    ),
-                )
-                break
 
         if verification.get("status") == "passed":
             state["attempts"] = list(state.get("attempts", [])) + [
@@ -928,6 +1067,7 @@ def _verifier_node(ops: EngineOps):
                     payload={"source": "python-engine", "stage": "verifier", "attempt_no": attempt_no, "verification": verification},
                 ),
             )
+            state["retry_hints"] = {}
             state["should_retry"] = False
             return _full_state(state)
 
@@ -1029,6 +1169,59 @@ def _verifier_node(ops: EngineOps):
     return _node
 
 
+def _retry_reflection_node(ops: EngineOps):
+    async def _node(state: dict[str, Any]) -> dict[str, Any]:
+        if not state.get("should_retry", False):
+            return _full_state(state)
+        _record_execution_stage(
+            state,
+            stage_id="retry_reflection",
+            status="running",
+            summary="Reflecting on verifier failure for next retry.",
+        )
+        verification = state.get("verification_result", {}) or {}
+        failed_stage = str(verification.get("failed_stage") or state.get("retry_failed_stage") or "unknown")
+        failure_code = str(verification.get("failure_code") or "")
+        stderr_excerpt = str(verification.get("stderr_excerpt") or "")
+        retry_hint = str(verification.get("retry_hint") or "")
+        hints = {
+            "next_context_hint": _derive_next_context_hint(failed_stage, failure_code, stderr_excerpt),
+            "next_constraint_hint": _derive_next_constraint_hint(state, failed_stage),
+            "next_retry_strategy": _derive_next_retry_strategy(failed_stage, retry_hint),
+        }
+        state["retry_hints"] = hints
+        state["short_term_memory"] = ops.update_short_term_memory(
+            state,
+            snapshot_type="retry_context",
+            payload=hints,
+        )
+        _record_event(
+            state,
+            build_event(
+                task_id=state["task_id"],
+                event_type="retry_reflection_completed",
+                message="retry reflection completed",
+                status="RUNNING",
+                payload={
+                    "source": "python-engine",
+                    "stage": "retry_reflection",
+                    "attempt_no": _attempt_no(state),
+                    **hints,
+                },
+            ),
+        )
+        _record_execution_stage(
+            state,
+            stage_id="retry_reflection",
+            status="passed",
+            summary="Retry hints prepared for next patch generation.",
+            details=hints,
+        )
+        return _full_state(state)
+
+    return _node
+
+
 def _retry_router_node():
     async def _node(state: dict[str, Any]) -> dict[str, Any]:
         _record_debug_event(
@@ -1085,6 +1278,12 @@ def _retry_router_node():
 
 def _reporter_node(ops: EngineOps):
     async def _node(state: dict[str, Any]) -> dict[str, Any]:
+        _record_execution_stage(
+            state,
+            stage_id="final_answer_writing",
+            status="running",
+            summary="Compiling final patch delivery and verification truth.",
+        )
         _record_debug_event(
             state,
             "langgraph_node_started",
@@ -1122,6 +1321,18 @@ def _reporter_node(ops: EngineOps):
 
         state["final_status"] = "completed"
         review_payload = ops.build_review_completed_payload(EngineState.model_validate(state))
+        _record_execution_stage(
+            state,
+            stage_id="final_answer_writing",
+            status="passed",
+            summary="Final answer payload compiled.",
+        )
+        _record_execution_stage(
+            state,
+            stage_id="completed",
+            status="passed",
+            summary="Review pipeline completed.",
+        )
         _record_event(
             state,
             build_event(
@@ -1159,7 +1370,7 @@ def _route_after_verifier(state: dict[str, Any]) -> str:
     if verification.get("status") == "passed":
         return "reporter"
     if state.get("should_retry", False):
-        return "retry_router"
+        return "retry_reflection"
     return "reporter"
 
 
@@ -1181,6 +1392,52 @@ def _record_debug_event(state: dict[str, Any], event_type: str, message: str, pa
     _record_event(
         state,
         build_event(task_id=state["task_id"], event_type=event_type, message=message, status="RUNNING", payload=payload),
+    )
+
+
+def _record_execution_stage(
+    state: dict[str, Any],
+    *,
+    stage_id: str,
+    status: str,
+    summary: str,
+    details: Any = None,
+) -> None:
+    execution = dict(state.get("execution_stages", {}) or {})
+    current = dict(execution.get(stage_id, {}) or {})
+    started_at = str(current.get("started_at") or "")
+    if status == "running":
+        started_at = started_at or _now_iso()
+        finished_at = None
+        duration_ms = None
+    else:
+        started_at = started_at or _now_iso()
+        finished_at = _now_iso()
+        duration_ms = _duration_ms(started_at, finished_at)
+    next_payload = {
+        "stage_id": stage_id,
+        "status": status,
+        "summary": summary,
+        "details": details,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "duration_ms": duration_ms,
+    }
+    execution[stage_id] = next_payload
+    state["execution_stages"] = execution
+    _record_event(
+        state,
+        build_event(
+            task_id=state["task_id"],
+            event_type="execution_stage_update",
+            message=f"{stage_id} {status}",
+            status="RUNNING",
+            payload={
+                "source": "python-engine",
+                "stage": "execution",
+                **next_payload,
+            },
+        ),
     )
 
 
@@ -1209,7 +1466,10 @@ def _build_attempt_summary(
 def _extract_failure_reason(verification: dict[str, Any]) -> str:
     for stage in verification.get("stages", []):
         if stage.get("status") == "failed":
-            reason = str(stage.get("reason") or "").strip()
+            reason = str(stage.get("failure_code") or "").strip()
+            if reason:
+                return reason
+            reason = str(stage.get("summary") or "").strip()
             if reason:
                 return reason
             stderr = str(stage.get("stderr_summary") or "").strip()
@@ -1221,6 +1481,9 @@ def _extract_failure_reason(verification: dict[str, Any]) -> str:
 def _extract_failure_detail(verification: dict[str, Any]) -> str | None:
     for stage in verification.get("stages", []):
         if stage.get("status") == "failed":
+            detail = str(stage.get("details") or "").strip()
+            if detail:
+                return detail
             stderr = str(stage.get("stderr_summary") or "").strip()
             if stderr:
                 return stderr
@@ -1240,6 +1503,47 @@ def _extract_compile_failure_bucket(verification: dict[str, Any]) -> str | None:
         if bucket:
             return bucket
     return None
+
+
+def _derive_next_context_hint(failed_stage: str, failure_code: str, stderr_excerpt: str) -> str:
+    stage = failed_stage.strip().lower()
+    if stage == "patch_apply":
+        return "Please include the exact current snippet around the target hunk so diff context can align."
+    if stage == "compile":
+        return "Provide missing symbol/import definitions and related method signatures referenced by compile errors."
+    if stage == "lint":
+        return "Provide repository lint rule set or style constraints to align generated patch with lint expectations."
+    if stage == "test":
+        return "Provide regression test entry command and failing test output to guide behavioral fix."
+    if stage == "security_rescan":
+        return "Provide security rule identifiers or scanner output to target the newly introduced findings."
+    if "llm" in failure_code.lower():
+        return "Clarify expected output contract and include one valid unified diff example for the same snippet style."
+    if stderr_excerpt:
+        return "Provide surrounding code for the failing line and dependent methods/classes referenced in stderr."
+    return "Provide minimal reproducible failing context: target method + caller + expected behavior constraints."
+
+
+def _derive_next_constraint_hint(state: dict[str, Any], failed_stage: str) -> str:
+    user_constraints = str(state.get("message_text") or "").strip()
+    if user_constraints:
+        return f"Current user constraints should remain enforced: {user_constraints[:180]}"
+    if failed_stage == "compile":
+        return "Do not change public signatures unless explicitly required; prioritize import/type consistency."
+    return "Clarify whether API signatures, exception behavior, or performance constraints are strict requirements."
+
+
+def _derive_next_retry_strategy(failed_stage: str, retry_hint: str) -> str:
+    if retry_hint.strip():
+        return retry_hint.strip()
+    stage = failed_stage.strip().lower()
+    if stage == "patch_apply":
+        return "Regenerate a smaller unified diff with accurate file header and hunk context."
+    if stage == "compile":
+        return "Patch compile blockers first, then rerun verifier before semantic refactor."
+    if stage in {"lint", "test", "security_rescan"}:
+        return f"Target {stage} failures directly using verifier stderr excerpts as acceptance criteria."
+    return "Generate a non-duplicate patch that directly addresses the latest failed verifier stage."
 
 
 def _attempt_no(state: dict[str, Any]) -> int:
@@ -1286,6 +1590,21 @@ def _build_local_snippet_context(*, code_text: str, focus_line: int, window: int
         "token_count": max(1, int(len(snippet) / 4)) if snippet else 1,
         "reason": "issue vicinity",
     }
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _duration_ms(started_at: str | None, finished_at: str | None) -> int | None:
+    if not started_at or not finished_at:
+        return None
+    try:
+        start = datetime.fromisoformat(started_at)
+        end = datetime.fromisoformat(finished_at)
+        return max(0, int((end - start).total_seconds() * 1000))
+    except Exception:
+        return None
 
 
 def _full_state(state: dict[str, Any]) -> dict[str, Any]:

@@ -11,6 +11,7 @@ import ResultSummaryCard from '../components/ResultSummaryCard.vue'
 import ReviewForm from '../components/ReviewForm.vue'
 import ReviewSidebar from '../components/ReviewSidebar.vue'
 import StageDetailPanel from '../components/StageDetailPanel.vue'
+import ExecutionTimelineCard from '../components/ExecutionTimelineCard.vue'
 import type {
   ConversationMessage,
   ConversationSummary,
@@ -89,6 +90,16 @@ const resultStats = computed(() => {
       userMessage: '-',
       retryExhausted: false,
       noFixNeeded: false,
+      patchApplyStatus: 'pending',
+      compileStatus: 'pending',
+      lintStatus: 'pending',
+      testStatus: 'pending',
+      securityStatus: 'pending',
+      regressionRisk: 'unknown',
+      failureTaxonomy: 'none',
+      nextContextHint: '-',
+      nextConstraintHint: '-',
+      nextRetryStrategy: '-',
     }
   }
   return extractResultStats(reviewResult.value)
@@ -379,7 +390,7 @@ async function submitReview() {
   }
 }
 
-function openDetailPanel() {
+function openDetailPanel(_stageKey?: string) {
   detailPanelOpen.value = true
 }
 
@@ -498,6 +509,11 @@ onBeforeUnmount(() => {
           <p class="text">{{ errorMessage }}</p>
         </article>
       </section>
+
+      <ExecutionTimelineCard
+        :timeline="stageTimeline"
+        @open-stage="openDetailPanel"
+      />
 
       <footer class="composer-wrap">
         <ReviewForm

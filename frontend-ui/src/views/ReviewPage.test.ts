@@ -41,6 +41,7 @@ const stubs = {
   },
   StageDetailPanel: { template: '<div data-test="panel"></div>' },
   ResultSummaryCard: { template: '<div data-test="result"></div>' },
+  ExecutionTimelineCard: { template: '<div data-test="timeline"></div>' },
 }
 
 describe('ReviewPage', () => {

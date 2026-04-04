@@ -23,6 +23,9 @@ export function buildAccumulatedResult(events: ReviewEvent[]): Record<string, un
     if (payload.delivery && typeof payload.delivery === 'object') result.delivery = payload.delivery
     if (payload.context_budget && typeof payload.context_budget === 'object') result.context_budget = payload.context_budget
     if (payload.verification && typeof payload.verification === 'object') result.verification = payload.verification
+    if (payload.execution_truth && typeof payload.execution_truth === 'object') result.execution_truth = payload.execution_truth
+    if (payload.execution_stages && typeof payload.execution_stages === 'object') result.execution_stages = payload.execution_stages
+    if (payload.standards_hits && typeof payload.standards_hits === 'object') result.standards_hits = payload.standards_hits
     if (payload.patch && typeof payload.patch === 'object') result.patch = payload.patch
     if (Array.isArray(payload.tool_trace)) result.tool_trace = payload.tool_trace
     if (Array.isArray(payload.llm_trace)) result.llm_trace = payload.llm_trace

@@ -19,6 +19,7 @@ def build_fixer_prompt_payload(
     last_failure: dict[str, Any] | None = None,
     repo_profile: dict[str, Any] | None = None,
     action_history: list[dict[str, Any]] | None = None,
+    retry_hints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "role": "Sentinel-CR Verified Patch Agent",
@@ -47,6 +48,7 @@ def build_fixer_prompt_payload(
             "context_summary": context_summary,
             "selected_context": selected_context or [],
             "last_failure": last_failure or {},
+            "retry_hints": retry_hints or {},
             "memory_matches": memory_matches,
             "standards_matches": standards_matches,
             "repo_profile": repo_profile or {},

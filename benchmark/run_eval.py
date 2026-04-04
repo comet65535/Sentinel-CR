@@ -179,6 +179,13 @@ def _build_case_result(*, case_id: str, meta: dict[str, Any], row: dict[str, Any
 
     patch_diff = str(delivery.get("unified_diff") or patch.get("unified_diff") or patch.get("content") or "")
     verified_level = str(row.get("verified_level") or delivery.get("verified_level") or verification.get("verified_level") or "L0")
+    stage_status = {
+        "patch_apply": _stage_status(verification, "patch_apply"),
+        "compile": _stage_status(verification, "compile"),
+        "lint": _stage_status(verification, "lint"),
+        "test": _stage_status(verification, "test"),
+        "security_rescan": _stage_status(verification, "security_rescan"),
+    }
 
     return {
         "case_id": case_id,
@@ -196,6 +203,12 @@ def _build_case_result(*, case_id: str, meta: dict[str, Any], row: dict[str, Any
         "latency_sec": float(row.get("latency_sec") or 0.0),
         "token_cost": int(_token_cost(llm_trace)),
         "verified_level": verified_level,
+        "final_verified_level": verified_level,
+        "patch_apply": stage_status["patch_apply"],
+        "compile": stage_status["compile"],
+        "lint": stage_status["lint"],
+        "test": stage_status["test"],
+        "security_rescan": stage_status["security_rescan"],
         "failure_taxonomy": taxonomy.to_dict(),
         "tool_trace": tool_trace,
         "expected_tools": expected_tools,
@@ -346,6 +359,19 @@ def _stage_passed(verification: dict[str, Any], stage: str) -> bool:
             continue
         return str(item.get("status") or "") == "passed"
     return False
+
+
+def _stage_status(verification: dict[str, Any], stage: str) -> str:
+    stages = verification.get("stages")
+    if not isinstance(stages, list):
+        return "pending"
+    for item in stages:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("stage") or "") != stage:
+            continue
+        return str(item.get("status") or "pending")
+    return "pending"
 
 
 def _token_cost(llm_trace: list[Any]) -> int:

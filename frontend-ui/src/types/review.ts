@@ -1,7 +1,8 @@
-export type ReviewTaskStatus = 'CREATED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+﻿export type ReviewTaskStatus = 'CREATED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
 
 export interface FailureTaxonomy {
   bucket: string
+  legacy_bucket?: string | null
   code: string | null
   explanation: string | null
 }
@@ -48,6 +49,51 @@ export interface LlmTraceItem {
   [key: string]: unknown
 }
 
+export interface VerificationStageFact {
+  stage: string
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'blocked'
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+  summary?: string | null
+  details?: unknown
+  skip_reason?: string | null
+  exit_code?: number | null
+  stdout_summary?: string
+  stderr_summary?: string
+  stderr_excerpt?: string | null
+  failure_code?: string | null
+  retryable?: boolean
+  retry_hint?: string | null
+}
+
+export interface ExecutionTruth {
+  patch_apply_status: string
+  compile_status: string
+  lint_status: string
+  test_status: string
+  security_rescan_status: string
+  regression_risk: 'unknown' | 'untested' | 'low' | 'medium' | 'high' | string
+  failure_taxonomy: FailureTaxonomy
+  next_context_hint?: string | null
+  next_constraint_hint?: string | null
+  next_retry_strategy?: string | null
+}
+
+export interface StandardsHitItem {
+  id?: string
+  source?: string
+  score?: number
+  summary?: string
+  used_by?: string[]
+}
+
+export interface StandardsHitsSummary {
+  hit_count: number
+  sources: string[]
+  hits: StandardsHitItem[]
+}
+
 export interface ReviewSummary {
   issue_count: number
   repair_plan_count: number
@@ -68,7 +114,7 @@ export interface ReviewSummary {
 export interface DeliveryResult {
   unified_diff: string
   verified_level: string
-  verification_stages: Array<Record<string, unknown>>
+  verification_stages: VerificationStageFact[]
   final_outcome: string
   failed_stage?: string | null
   failure_code?: string | null
@@ -84,10 +130,21 @@ export interface ReviewMemory {
   case_store_summary?: Record<string, unknown>
 }
 
+export interface ExecutionStageState {
+  stage_id: string
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'blocked'
+  summary: string
+  details?: unknown
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+}
+
 export interface ReviewResult {
   engine: string
   delivery: DeliveryResult
   summary: ReviewSummary
+  execution_truth?: ExecutionTruth
   analyzer: Record<string, unknown>
   analyzer_evidence: Record<string, unknown>
   issues: Record<string, unknown>[]
@@ -99,6 +156,8 @@ export interface ReviewResult {
   planner_summary: Record<string, unknown>
   memory: ReviewMemory
   memory_hits?: Record<string, unknown>
+  standards_hits?: StandardsHitsSummary
+  execution_stages?: Record<string, ExecutionStageState>
   context_budget: ContextBudget
   selected_context: Record<string, unknown>[]
   tool_trace: ToolTraceItem[]
@@ -106,7 +165,17 @@ export interface ReviewResult {
   repo_profile?: Record<string, unknown>
   patch: Record<string, unknown>
   attempts: Record<string, unknown>[]
-  verification: Record<string, unknown> | null
+  verification: {
+    status?: string
+    overall_status?: string
+    verified_level?: string
+    failed_stage?: string | null
+    stages?: VerificationStageFact[]
+    regression_risk?: string
+    failure_code?: string | null
+    failure_reason?: string | null
+    retry_hint?: string | null
+  } | null
   user_events?: Record<string, unknown>[]
   debug_events?: Record<string, unknown>[]
 }

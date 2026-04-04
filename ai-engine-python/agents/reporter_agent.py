@@ -18,6 +18,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     memory_hits = dict(state.memory_hits or {})
     tool_trace = list(state.tool_trace or [])
     llm_trace = list(state.llm_trace or []) or _extract_llm_trace(state.options)
+    standards_hits = list(state.standards_hits or [])
 
     verification_result = _sanitize_verification(state.verification_result)
     verified_level = str((verification_result or {}).get("verified_level") or "L0")
@@ -37,9 +38,15 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
     retry_exhausted = bool(
         final_outcome == "failed_after_retries" and state.enable_verifier and state.retry_count >= state.max_retries
     )
+    execution_truth = _build_execution_truth(
+        verification_result=verification_result,
+        failure_taxonomy=failure_taxonomy,
+        retry_hints=state.retry_hints,
+    )
     user_message = _build_user_message(
         final_outcome=final_outcome,
-        failed_stage=failed_stage,
+        verified_level=verified_level,
+        execution_truth=execution_truth,
         failure_reason=failure_reason,
         retry_count=state.retry_count,
         no_fix_needed=state.no_fix_needed,
@@ -81,6 +88,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "engine": "python",
         "delivery": delivery,
         "summary": summary_block,
+        "execution_truth": execution_truth,
         "analyzer": state.analyzer_summary,
         "analyzer_evidence": {
             "issues": state.issues,
@@ -104,6 +112,8 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
             "case_store_summary": case_store_summary,
         },
         "memory_hits": memory_hits,
+        "standards_hits": _build_standards_hits(standards_hits),
+        "execution_stages": dict(state.execution_stages or {}),
         "context_budget": context_budget,
         "selected_context": selected_context,
         "tool_trace": tool_trace,
@@ -123,6 +133,7 @@ def build_review_completed_payload(state: EngineState) -> dict[str, Any]:
         "result": result_block,
         "delivery": delivery,
         "summary": summary_block,
+        "execution_truth": execution_truth,
         "patch": result_block["patch"],
         "verification": verification_result,
         "user_events": user_events,
@@ -160,10 +171,15 @@ def _sanitize_verification(verification_result: dict[str, Any] | None) -> dict[s
             {
                 "stage": stage.get("stage"),
                 "status": stage.get("status"),
+                "started_at": stage.get("started_at"),
+                "finished_at": stage.get("finished_at"),
+                "duration_ms": stage.get("duration_ms"),
+                "summary": stage.get("summary"),
+                "details": stage.get("details"),
+                "skip_reason": stage.get("skip_reason"),
                 "exit_code": stage.get("exit_code"),
                 "stdout_summary": stage.get("stdout_summary", ""),
                 "stderr_summary": stage.get("stderr_summary", ""),
-                "reason": stage.get("reason"),
                 "failure_code": stage.get("failure_code"),
                 "stderr_excerpt": stage.get("stderr_excerpt"),
                 "retry_hint": stage.get("retry_hint"),
@@ -173,6 +189,7 @@ def _sanitize_verification(verification_result: dict[str, Any] | None) -> dict[s
 
     return {
         "status": verification_result.get("status"),
+        "overall_status": verification_result.get("overall_status"),
         "verified_level": verification_result.get("verified_level", "L0"),
         "passed_stages": verification_result.get("passed_stages", []),
         "failed_stage": verification_result.get("failed_stage"),
@@ -183,6 +200,51 @@ def _sanitize_verification(verification_result: dict[str, Any] | None) -> dict[s
         "failure_code": verification_result.get("failure_code"),
         "stderr_excerpt": verification_result.get("stderr_excerpt"),
         "retry_hint": verification_result.get("retry_hint"),
+        "regression_risk": verification_result.get("regression_risk", "unknown"),
+    }
+
+
+def _build_execution_truth(
+    *,
+    verification_result: dict[str, Any] | None,
+    failure_taxonomy: dict[str, Any],
+    retry_hints: dict[str, Any] | None,
+) -> dict[str, Any]:
+    retry_hints = dict(retry_hints or {})
+    stage_status = {str(item.get("stage") or ""): str(item.get("status") or "pending") for item in (verification_result or {}).get("stages", [])}
+    return {
+        "patch_apply_status": stage_status.get("patch_apply", "pending"),
+        "compile_status": stage_status.get("compile", "pending"),
+        "lint_status": stage_status.get("lint", "pending"),
+        "test_status": stage_status.get("test", "pending"),
+        "security_rescan_status": stage_status.get("security_rescan", "pending"),
+        "regression_risk": str((verification_result or {}).get("regression_risk") or "unknown"),
+        "failure_taxonomy": failure_taxonomy,
+        "next_context_hint": retry_hints.get("next_context_hint"),
+        "next_constraint_hint": retry_hints.get("next_constraint_hint"),
+        "next_retry_strategy": retry_hints.get("next_retry_strategy"),
+    }
+
+
+def _build_standards_hits(standards_hits: list[dict[str, Any]]) -> dict[str, Any]:
+    sources = sorted({str(item.get("source") or "unknown") for item in standards_hits if isinstance(item, dict)})
+    condensed = []
+    for item in standards_hits[:3]:
+        if not isinstance(item, dict):
+            continue
+        condensed.append(
+            {
+                "id": item.get("id"),
+                "source": item.get("source"),
+                "score": item.get("score"),
+                "summary": str(item.get("text") or item.get("snippet") or "")[:240],
+                "used_by": ["fixer", "response"],
+            }
+        )
+    return {
+        "hit_count": len(standards_hits),
+        "sources": sources,
+        "hits": condensed,
     }
 
 
@@ -267,7 +329,7 @@ def _resolve_failure_reason(
             return reason
         for stage in verification_result.get("stages", []) or []:
             if stage.get("status") == "failed":
-                s = str(stage.get("stderr_summary") or stage.get("reason") or "").strip()
+                s = str(stage.get("failure_code") or stage.get("summary") or "").strip()
                 if s:
                     return s
     for attempt in reversed(state.attempts):
@@ -288,6 +350,9 @@ def _resolve_failure_detail(
     if verification_result is not None:
         for stage in verification_result.get("stages", []) or []:
             if stage.get("status") == "failed":
+                detail = str(stage.get("details") or "").strip()
+                if detail:
+                    return detail
                 stderr = str(stage.get("stderr_summary") or "").strip()
                 if stderr:
                     return stderr
@@ -319,23 +384,33 @@ def _resolve_failure_code(verification_result: dict[str, Any] | None, failure_re
 def _build_user_message(
     *,
     final_outcome: str,
-    failed_stage: str | None,
+    verified_level: str,
+    execution_truth: dict[str, Any],
     failure_reason: str | None,
     retry_count: int,
     no_fix_needed: bool,
 ) -> str:
     if no_fix_needed:
-        return "No fix needed."
+        return "No fix needed. Analyzer found no actionable issue."
     if final_outcome == "verified_patch":
-        return "Verified patch generated."
+        return (
+            f"Patch applied: {execution_truth.get('patch_apply_status')}; "
+            f"compile={execution_truth.get('compile_status')}, lint={execution_truth.get('lint_status')}, "
+            f"test={execution_truth.get('test_status')}, security={execution_truth.get('security_rescan_status')}. "
+            f"Current verified level is {verified_level}; regression risk={execution_truth.get('regression_risk')}."
+        )
     if final_outcome == "patch_generated_unverified":
-        return "Patch generated but verifier is disabled."
+        return "Patch generated, but verifier was not fully executed."
     if final_outcome == "failed_no_patch":
-        return "No valid patch generated."
+        return "No valid patch was generated from current evidence."
     if final_outcome == "failed_after_retries":
-        stage = failed_stage or "verifier"
-        reason = f" Latest error: {failure_reason}." if failure_reason else ""
-        return f"Verification failed at {stage} after {retry_count} retries.{reason}"
+        failure_tax = execution_truth.get("failure_taxonomy") if isinstance(execution_truth.get("failure_taxonomy"), dict) else {}
+        bucket = str(failure_tax.get("bucket") or "unknown")
+        return (
+            f"Verification failed after {retry_count} retries. Failure taxonomy={bucket}; "
+            f"reason={failure_reason or 'unknown'}. "
+            f"Next context hint: {execution_truth.get('next_context_hint') or 'provide failing context'}."
+        )
     return "Review did not complete successfully."
 
 

@@ -19,6 +19,16 @@ const props = defineProps<{
     userMessage: string
     retryExhausted: boolean
     noFixNeeded: boolean
+    patchApplyStatus: string
+    compileStatus: string
+    lintStatus: string
+    testStatus: string
+    securityStatus: string
+    regressionRisk: string
+    failureTaxonomy: string
+    nextContextHint: string
+    nextConstraintHint: string
+    nextRetryStrategy: string
   }
   patchContent: string
 }>()
@@ -31,7 +41,7 @@ const emit = defineEmits<{
 <template>
   <section class="result-card" @click="props.debugMode && emit('open-process')">
     <header class="result-header">
-      <h3>Verified Patch</h3>
+      <h3>Verified Patch Delivery</h3>
       <button
         v-if="props.debugMode"
         type="button"
@@ -47,6 +57,17 @@ const emit = defineEmits<{
     <template v-else>
       <p class="outcome">{{ props.stats.verifiedLevel }} · {{ props.stats.finalOutcome }}</p>
 
+      <div class="truth-grid">
+        <p><strong>patch_apply:</strong> {{ props.stats.patchApplyStatus }}</p>
+        <p><strong>compile:</strong> {{ props.stats.compileStatus }}</p>
+        <p><strong>lint:</strong> {{ props.stats.lintStatus }}</p>
+        <p><strong>test:</strong> {{ props.stats.testStatus }}</p>
+        <p><strong>security:</strong> {{ props.stats.securityStatus }}</p>
+        <p><strong>regression risk:</strong> {{ props.stats.regressionRisk }}</p>
+      </div>
+
+      <p class="taxonomy"><strong>failure taxonomy:</strong> {{ props.stats.failureTaxonomy }}</p>
+
       <PatchDiffViewer
         v-if="props.patchContent"
         :patch-content="props.patchContent"
@@ -57,7 +78,14 @@ const emit = defineEmits<{
         {{ props.stats.userMessage }}
       </p>
 
-      <p v-if="props.stats.failedStage !== '-'" class="failure">
+      <div class="hints">
+        <p><strong>next_context_hint:</strong> {{ props.stats.nextContextHint }}</p>
+        <p><strong>next_constraint_hint:</strong> {{ props.stats.nextConstraintHint }}</p>
+        <p><strong>next_retry_strategy:</strong> {{ props.stats.nextRetryStrategy }}</p>
+      </div>
+
+      <p v-if="props.stats.failedStage !== '-'
+        " class="failure">
         failed_stage: {{ props.stats.failedStage }}
         <span v-if="props.stats.failureReason && props.stats.failureReason !== '-'">
           ({{ props.stats.failureReason }})
@@ -69,7 +97,7 @@ const emit = defineEmits<{
         class="trace-details"
         @click.stop
       >
-        <summary>stderr excerpt</summary>
+        <summary>failure detail</summary>
         <pre>{{ props.stats.failureDetail }}</pre>
       </details>
     </template>
@@ -120,13 +148,22 @@ const emit = defineEmits<{
   font-weight: 600;
 }
 
-.message {
+.truth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.2rem 0.8rem;
+}
+
+.truth-grid p,
+.taxonomy,
+.message,
+.hints p,
+.failure {
   margin: 0;
   color: #2e4f61;
 }
 
 .failure {
-  margin: 0;
   color: #9a3f3f;
 }
 
@@ -146,5 +183,11 @@ const emit = defineEmits<{
   word-break: break-word;
   color: #2d4b60;
   font-size: 0.78rem;
+}
+
+@media (max-width: 780px) {
+  .truth-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

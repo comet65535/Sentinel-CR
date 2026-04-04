@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
@@ -15,6 +15,7 @@ from memory import (
     promote_patch_from_verification,
     resolve_repo_profile,
     retrieve_case_matches,
+    search_standards,
     summarize_repo_profile,
     update_short_term_memory,
 )
@@ -34,6 +35,7 @@ def _build_ops() -> EngineOps:
         compose_day2_output=compose_day2_output,
         run_planner_agent=run_planner_agent,
         retrieve_case_matches=retrieve_case_matches,
+        search_standards=search_standards,
         run_fixer_agent=run_fixer_agent,
         run_verifier_agent=run_verifier_agent,
         build_review_completed_payload=build_review_completed_payload,
